@@ -30,12 +30,12 @@ protocols:
       sync_retry_nodes: 33
       batch_size: 500000
       max_batch_delay: 50
-      support_broadcast: true
+      support_broadcast: false
       sigma: 1
       kappa: 2
       reference: 17
       coverage: 33
-      candidate_count: 17
+      candidate_count: 1
 
   tusk:
     branch: tusk
