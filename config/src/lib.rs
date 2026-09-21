@@ -420,9 +420,34 @@ impl Committee {
         }
     }
 
+    /// n=10, coverage=7, core={0..4}: core recipients keep the sliding fringe
+    /// window (56, 67, 78, 89, 95). Fringe recipients 5-9 use 56, 68, 78, 68, 69
+    /// so first-round support of 5/7/9 drops from 4 to 3. Entries are extra
+    /// fringe senders (self is never broadcast).
+    const N10_C7_FRINGE_EXTRAS: [&'static [usize]; 10] = [
+        &[5, 6],
+        &[6, 7],
+        &[7, 8],
+        &[8, 9],
+        &[9, 5],
+        &[6],
+        &[8],
+        &[8],
+        &[6],
+        &[6],
+    ];
+
+    fn selective_attack_uses_n10_c7_fringe_table(&self) -> bool {
+        self.size() == 10
+            && self.coverage == 7
+            && self.selective_attack_core_group_size() == 5
+    }
+
     /// Every recipient sees the same fixed core. Fill the remaining `coverage` budget
-    /// from the other group, starting at the recipient's group-local rank and wrapping.
+    /// from the other group. Default: wrap from the recipient's group-local rank.
     /// Other recipients skip themselves, since their own author is already counted.
+    /// For n=10 / coverage=7 / core=5, fringe recipients use a fixed extra-sender
+    /// table instead of uniform wrapping (see `N10_C7_FRINGE_EXTRAS`).
     pub fn selective_attack_allows_sender_to_recipient(
         &self,
         sender: &PublicKey,
@@ -439,6 +464,16 @@ impl Committee {
         }
         if sender_group == 0 {
             return true;
+        }
+
+        if self.selective_attack_uses_n10_c7_fringe_table() {
+            let Some(recipient_index) = self.authority_index(recipient) else {
+                return true;
+            };
+            let Some(sender_index) = self.authority_index(sender) else {
+                return true;
+            };
+            return Self::N10_C7_FRINGE_EXTRAS[recipient_index].contains(&sender_index);
         }
 
         let recipient_rank = self.selective_attack_rank_in_group(recipient).unwrap();
@@ -814,10 +849,14 @@ mod tests {
         assert_eq!(committee.selective_attack_core_group_size(), 5);
         assert_eq!(visible(0), vec![1, 2, 3, 4, 5, 6]);
         assert_eq!(visible(1), vec![0, 2, 3, 4, 6, 7]);
+        assert_eq!(visible(2), vec![0, 1, 3, 4, 7, 8]);
+        assert_eq!(visible(3), vec![0, 1, 2, 4, 8, 9]);
         assert_eq!(visible(4), vec![0, 1, 2, 3, 5, 9]);
         assert_eq!(visible(5), vec![0, 1, 2, 3, 4, 6]);
-        assert_eq!(visible(6), vec![0, 1, 2, 3, 4, 7]);
-        assert_eq!(visible(9), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(visible(6), vec![0, 1, 2, 3, 4, 8]);
+        assert_eq!(visible(7), vec![0, 1, 2, 3, 4, 8]);
+        assert_eq!(visible(8), vec![0, 1, 2, 3, 4, 6]);
+        assert_eq!(visible(9), vec![0, 1, 2, 3, 4, 6]);
     }
 
     #[test]
