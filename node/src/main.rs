@@ -77,6 +77,8 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
     let committee =
         Committee::import(committee_file).context("Failed to load the committee information")?;
 
+    committee.validate_selective_attack()?;
+
     // Load default parameters if none are specified.
     let parameters = match parameters_file {
         Some(filename) => {

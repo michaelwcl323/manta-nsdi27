@@ -24,6 +24,7 @@ from plot_latency_y_axis import apply_linear_latency_axis, apply_log_scale_laten
 DEFAULT_ORDER = ["k2-c4", "k2-c7", "k3-c7", "k4-c7"]
 TIME_AXIS_PROPOSAL = "proposal"
 TIME_AXIS_COMMIT = "commit"
+TIME_AXIS_SEND = "send"
 
 # Figure typography (axes, ticks, title) and legend; cumulative-mean default y-axis top.
 PLOT_FONT_SIZE = 24
@@ -158,16 +159,19 @@ def get_attack_window(
 def load_consensus_latency_rows(
     run_dir: Path,
     time_axis: str,
+    include_uncommitted: bool = True,
 ) -> tuple[list[dict[str, float]], float | None]:
     latency_file = run_dir / "latency.csv"
     if not latency_file.exists():
         return [], None
 
     raw_rows: list[dict[str, float]] = []
+    committed_send_ids: set[tuple[int, int]] = set()
     with latency_file.open(newline="") as f:
         reader = csv.DictReader(f)
+        metric = "end_to_end_latency" if time_axis == TIME_AXIS_SEND else "consensus_latency"
         for row in reader:
-            if row.get("metric") != "consensus_latency":
+            if row.get("metric") != metric:
                 continue
             proposal_ts = row.get("proposal_ts")
             commit_ts = row.get("commit_ts")
@@ -184,13 +188,26 @@ def load_consensus_latency_rows(
                     "latency_s": latency_value_s,
                 }
             )
+            if time_axis == TIME_AXIS_SEND:
+                identifier = row.get("identifier") or ""
+                client_s, sep, tx_s = identifier.partition(":")
+                if sep and client_s.isdigit() and tx_s.isdigit():
+                    committed_send_ids.add((int(client_s), int(tx_s)))
 
+    event_key = "commit_ts" if time_axis == TIME_AXIS_COMMIT else "proposal_ts"
+    fallback = min((row["proposal_ts"] for row in raw_rows), default=None)
+    if fallback is None and time_axis != TIME_AXIS_SEND:
+        return [], None
+    primary_start = resolve_primary_start_ts(
+        run_dir,
+        fallback if fallback is not None else 0.0,
+    )
+    if time_axis == TIME_AXIS_SEND and include_uncommitted:
+        raw_rows.extend(
+            _uncommitted_send_rows(run_dir, committed_send_ids, primary_start)
+        )
     if not raw_rows:
         return [], None
-
-    event_key = "proposal_ts" if time_axis == TIME_AXIS_PROPOSAL else "commit_ts"
-    fallback = min(row["proposal_ts"] for row in raw_rows)
-    primary_start = resolve_primary_start_ts(run_dir, fallback)
     return [
         {
             "aligned_time_s": row[event_key] - primary_start,
@@ -198,6 +215,63 @@ def load_consensus_latency_rows(
         }
         for row in raw_rows
     ], primary_start
+
+
+UNCOMMITTED_END_S = 120.0
+
+
+def _uncommitted_send_rows(
+    run_dir: Path,
+    committed_send_ids: set[tuple[int, int]],
+    primary_start: float,
+) -> list[dict[str, float]]:
+    """Uncommitted client sends after the attack starts. Their end time is 120s after primary start."""
+    from re import findall
+
+    from benchmark.logs import _to_posix_utc
+
+    metadata = load_run_metadata(run_dir)
+    attack_start_s = get_attack_window(
+        run_dir,
+        metadata,
+        primary_start,
+        None,
+        None,
+        None,
+        None,
+    ).get("start")
+    if attack_start_s is None:
+        return []
+
+    logs_dir = run_dir / "logs"
+    if not logs_dir.is_dir():
+        return []
+    rows: list[dict[str, float]] = []
+    seen: set[tuple[int, int]] = set()
+    for path in sorted(logs_dir.glob("client-*-*.log")):
+        name_match = search(r"client-(\d+)-", path.name)
+        if name_match is None:
+            continue
+        client = int(name_match.group(1))
+        text = path.read_text(errors="replace")
+        for timestamp, tx_s in findall(r"\[([^\s\]]+Z) .* sample transaction (\d+)", text):
+            tx_id = int(tx_s)
+            key = (client, tx_id)
+            if key in committed_send_ids or key in seen:
+                continue
+            seen.add(key)
+            send_ts = _to_posix_utc(timestamp)
+            aligned_s = send_ts - primary_start
+            if aligned_s < float(attack_start_s) or aligned_s >= UNCOMMITTED_END_S:
+                continue
+            rows.append(
+                {
+                    "proposal_ts": send_ts,
+                    "commit_ts": primary_start + UNCOMMITTED_END_S,
+                    "latency_s": UNCOMMITTED_END_S - aligned_s,
+                }
+            )
+    return rows
 
 
 def rolling_quantile_series(
@@ -749,8 +823,12 @@ def draw(
 
         if title and title.strip():
             ax.set_title(title)
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel(rolling_latency_ylabel(rolling_stat))
+        if time_axis == TIME_AXIS_SEND:
+            ax.set_xlabel("Client send time since primary start (s)")
+            ax.set_ylabel(rolling_latency_ylabel(rolling_stat).replace("latency", "send latency"))
+        else:
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel(rolling_latency_ylabel(rolling_stat))
         if y_log_scale:
             apply_log_scale_latency_below_cut(
                 ax,
@@ -917,9 +995,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--time-axis",
-        choices=[TIME_AXIS_PROPOSAL, TIME_AXIS_COMMIT],
+        choices=[TIME_AXIS_PROPOSAL, TIME_AXIS_COMMIT, TIME_AXIS_SEND],
         default=TIME_AXIS_PROPOSAL,
-        help="Align points by proposal time or commit time. Defaults to proposal time.",
+        help=(
+            "Align points by proposal time, commit time, or client send time. "
+            "Send time uses end-to-end latency (commit minus client send). "
+            "Defaults to proposal time."
+        ),
     )
     parser.add_argument(
         "--order",

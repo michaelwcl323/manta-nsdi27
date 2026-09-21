@@ -67,6 +67,20 @@ class Committee:
         assert len({len(x) for x in addresses.values()}) == 1
         assert isinstance(base_port, int) and base_port > 1024
 
+        # The fixed core is mandatory for every recipient. An other recipient also
+        # counts itself, so the old visibility cap must have room for both.
+        if attack_enabled:
+            size = len(addresses)
+            core_size = size if size <= 1 else min(
+                max(attack_group_size or size // 2, 1), size - 1
+            )
+            required = core_size + int(size > core_size)
+            if coverage < required:
+                raise ConfigError(
+                    f'coverage={coverage} must be at least {required} for '
+                    f'core_group_size={core_size} plus the recipient itself'
+                )
+
         port = base_port
         self.json = {
             'authorities': OrderedDict(), 

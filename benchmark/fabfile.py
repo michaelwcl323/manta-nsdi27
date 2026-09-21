@@ -264,7 +264,7 @@ def cloudlab_wan(ctx, action='setup', settings_file='cloudlab_settings.json'):
 @task
 def cloudlab_remote(
     ctx,
-    debug=False,
+    debug=True,
     sigma=1,
     kappa=2,
     reference=7,
@@ -307,9 +307,9 @@ def cloudlab_remote(
     adaptive_intermediate_spill_cap_digests=1,
 
     #会根据这些tag会自动生成目录，将运行结果分类 目录是 design_tag/network_tag/load_tag/
-    design_tag='experiment2_attack_final',
+    design_tag='debug_new',
     network_tag='geo',
-    load_tag='balanced_50_500000_50',
+    load_tag='k2c7',
 ):
     ''' Run benchmarks on CloudLab '''
     allow_cross_step_weak_edges = _coerce_bool(allow_cross_step_weak_edges)

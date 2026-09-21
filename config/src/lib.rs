@@ -71,6 +71,9 @@ pub enum ConfigError {
     #[error("Node {0} is not in the committee")]
     NotInCommittee(PublicKey),
 
+    #[error("Invalid selective attack configuration: {0}")]
+    InvalidSelectiveAttack(String),
+
     #[error("Unknown worker id {0}")]
     UnknownWorker(WorkerId),
 
@@ -258,7 +261,7 @@ pub struct Committee {
     /// solid-step round inside the wave that just ended.
     #[serde(default)]
     pub solid_commit_trigger_on_solid_step: bool,
-    /// Enables the selective-broadcast attack that limits cross-group visibility after a
+    /// Enables the selective-broadcast attack with a shared core and ranked other peers after a
     /// fixed delay from node startup.
     #[serde(default = "default_attack_enabled")]
     pub attack_enabled: bool,
@@ -268,7 +271,8 @@ pub struct Committee {
     /// Attack duration in seconds. Zero means the attack stays enabled until the run ends.
     #[serde(default = "default_attack_duration_secs")]
     pub attack_duration_secs: u64,
-    /// Size of the first attack group. When set to 0, split the committee in half.
+    /// Size of the fixed core group (the first authorities in public-key order).
+    /// Every node waits for this core during the attack. Zero uses half the committee.
     #[serde(default = "default_attack_group_size")]
     pub attack_group_size: usize,
     /// Whether to also limit header broadcasts once the attack starts.
@@ -343,12 +347,10 @@ impl Committee {
         self.coverage as Stake
     }
 
-    /// Returns the size of the first attack group. When no explicit split is configured,
-    /// split the committee roughly in half. Degenerate committee sizes disable the split.
-    pub fn selective_attack_group_size(&self) -> usize {
-        let committee_size = self.size();
-        match committee_size {
-            0 | 1 => committee_size,
+    /// Fixed core size. Keep the legacy split/default and clamp behavior.
+    pub fn selective_attack_core_group_size(&self) -> usize {
+        match self.size() {
+            0 | 1 => self.size(),
             size => {
                 let configured = if self.attack_group_size == 0 {
                     size / 2
@@ -360,63 +362,52 @@ impl Committee {
         }
     }
 
-    fn selective_attack_group_bounds(&self, group: usize) -> Option<(usize, usize)> {
-        if self.size() <= 1 {
-            return None;
-        }
-        let split = self.selective_attack_group_size();
-        match group {
-            0 => Some((0, split)),
-            1 => Some((split, self.size())),
-            _ => None,
-        }
-    }
-
+    /// Group 0 is the shared core; group 1 contains all other authorities.
     pub fn selective_attack_group(&self, name: &PublicKey) -> Option<usize> {
         let index = self.authority_index(name)?;
-        let split = self.selective_attack_group_size();
-        Some(usize::from(index >= split))
+        Some(usize::from(
+            index >= self.selective_attack_core_group_size(),
+        ))
+    }
+
+    pub fn selective_attack_core_members(&self) -> impl Iterator<Item = &PublicKey> {
+        self.authorities
+            .keys()
+            .take(self.selective_attack_core_group_size())
     }
 
     fn selective_attack_rank_in_group(&self, name: &PublicKey) -> Option<usize> {
         let index = self.authority_index(name)?;
-        let split = self.selective_attack_group_size();
-        if index < split {
-            Some(index)
-        } else {
-            Some(index - split)
+        let split = self.selective_attack_core_group_size();
+        Some(if index < split { index } else { index - split })
+    }
+
+    /// Remote other authors needed after counting the entire core and the recipient itself.
+    pub fn selective_attack_other_group_sender_limit(&self, recipient: &PublicKey) -> usize {
+        let Some(group) = self.selective_attack_group(recipient) else {
+            return 0;
+        };
+        let core_size = self.selective_attack_core_group_size();
+        let own_other = usize::from(group == 1);
+        self.coverage
+            .saturating_sub(core_size + own_other)
+            .min(self.size().saturating_sub(core_size + own_other))
+    }
+
+    /// Reject a visibility budget that cannot contain the mandatory core plus an other
+    /// recipient's own author. Outside attack mode, preserve existing configuration behavior.
+    pub fn validate_selective_attack(&self) -> Result<(), ConfigError> {
+        if self.attack_enabled {
+            let core_size = self.selective_attack_core_group_size();
+            let required = core_size + usize::from(self.size() > core_size);
+            if self.coverage < required {
+                return Err(ConfigError::InvalidSelectiveAttack(format!(
+                    "coverage={} must be at least {} for core_group_size={} plus the recipient itself",
+                    self.coverage, required, core_size
+                )));
+            }
         }
-    }
-
-    fn selective_attack_same_group_remote_sender_limit(&self, recipient: &PublicKey) -> usize {
-        let Some(group) = self.selective_attack_group(recipient) else {
-            return 0;
-        };
-        let Some((start, end)) = self.selective_attack_group_bounds(group) else {
-            return 0;
-        };
-        let local_group_size = end.saturating_sub(start);
-        self.coverage
-            .saturating_sub(1)
-            .min(local_group_size.saturating_sub(1))
-    }
-
-    /// Returns how many cross-group senders should stay visible to the given recipient once the
-    /// attack starts, after reserving the smallest same-group sender set needed to keep the total
-    /// visible author set at exactly `coverage` whenever possible.
-    pub fn selective_attack_cross_group_sender_limit(&self, recipient: &PublicKey) -> usize {
-        let Some(group) = self.selective_attack_group(recipient) else {
-            return 0;
-        };
-        let Some((start, end)) = self.selective_attack_group_bounds(group) else {
-            return 0;
-        };
-        let local_group_size = end.saturating_sub(start);
-        let other_group_size = self.size().saturating_sub(local_group_size);
-        let same_group_remote_limit = self.selective_attack_same_group_remote_sender_limit(recipient);
-        self.coverage
-            .saturating_sub(1 + same_group_remote_limit)
-            .min(other_group_size)
+        Ok(())
     }
 
     fn selective_attack_rank_distance(rank: usize, start: usize, modulo: usize) -> usize {
@@ -429,11 +420,9 @@ impl Committee {
         }
     }
 
-    /// Receiver-centric selective visibility rule used by the attack. Each recipient sees only the
-    /// minimum number of remote authors needed to reach `coverage` once its own author is counted:
-    /// first a deterministic rotating prefix of same-group peers, then a deterministic rotating
-    /// prefix of cross-group peers. Different recipients therefore keep different neighborhoods
-    /// while still seeing at most `coverage` total authors whenever possible.
+    /// Every recipient sees the same fixed core. Fill the remaining `coverage` budget
+    /// from the other group, starting at the recipient's group-local rank and wrapping.
+    /// Other recipients skip themselves, since their own author is already counted.
     pub fn selective_attack_allows_sender_to_recipient(
         &self,
         sender: &PublicKey,
@@ -445,42 +434,24 @@ impl Committee {
         let Some(recipient_group) = self.selective_attack_group(recipient) else {
             return true;
         };
-        let Some(recipient_rank) = self.selective_attack_rank_in_group(recipient) else {
-            return true;
-        };
-        let Some(sender_rank) = self.selective_attack_rank_in_group(sender) else {
-            return true;
-        };
-
-        if sender_group == recipient_group {
-            let same_group_limit =
-                self.selective_attack_same_group_remote_sender_limit(recipient);
-            if same_group_limit == 0 {
-                return false;
-            }
-            let Some((start, end)) = self.selective_attack_group_bounds(recipient_group) else {
-                return true;
-            };
-            let local_group_size = end.saturating_sub(start);
-            let distance =
-                Self::selective_attack_rank_distance(sender_rank, recipient_rank, local_group_size);
-            return distance > 0 && distance <= same_group_limit;
-        }
-
-        let allowed_cross_group_senders =
-            self.selective_attack_cross_group_sender_limit(recipient);
-        if allowed_cross_group_senders == 0 {
+        if sender == recipient {
             return false;
         }
-        let Some((start, end)) = self.selective_attack_group_bounds(recipient_group) else {
+        if sender_group == 0 {
             return true;
-        };
-        let local_group_size = end.saturating_sub(start);
-        let other_group_size = self.size().saturating_sub(local_group_size);
-        let cross_group_start = recipient_rank % other_group_size.max(1);
-        let distance =
-            Self::selective_attack_rank_distance(sender_rank, cross_group_start, other_group_size);
-        distance < allowed_cross_group_senders
+        }
+
+        let recipient_rank = self.selective_attack_rank_in_group(recipient).unwrap();
+        let sender_rank = self.selective_attack_rank_in_group(sender).unwrap();
+        let other_size = self.size() - self.selective_attack_core_group_size();
+        let start = recipient_rank % other_size;
+        let distance = Self::selective_attack_rank_distance(sender_rank, start, other_size);
+        let limit = self.selective_attack_other_group_sender_limit(recipient);
+        if recipient_group == 1 {
+            distance > 0 && distance <= limit
+        } else {
+            distance < limit
+        }
     }
 
     /// Returns the primary addresses of the target primary.
@@ -826,80 +797,88 @@ mod tests {
     }
 
     #[test]
-    fn selective_attack_keeps_minimal_total_visibility_and_rotates_cross_group_peers() {
+    fn selective_attack_uses_shared_core_and_rotates_other_peers() {
         let committee = attack_committee(10, 7);
-        let authorities: Vec<_> = committee.authorities.keys().copied().collect();
-        let recipient_a = authorities[0];
-        let recipient_b = authorities[1];
-
-        assert_eq!(committee.selective_attack_group_size(), 5);
-        assert_eq!(
-            committee.selective_attack_same_group_remote_sender_limit(&recipient_a),
-            4
-        );
-        assert_eq!(committee.selective_attack_cross_group_sender_limit(&recipient_a), 2);
-
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[1],
-            &recipient_a
-        ));
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[5],
-            &recipient_a
-        ));
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[6],
-            &recipient_a
-        ));
-        assert!(!committee.selective_attack_allows_sender_to_recipient(
-            &authorities[7],
-            &recipient_a
-        ));
-
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[6],
-            &recipient_b
-        ));
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[7],
-            &recipient_b
-        ));
-        assert!(!committee.selective_attack_allows_sender_to_recipient(
-            &authorities[5],
-            &recipient_b
-        ));
+        let names: Vec<_> = committee.authorities.keys().copied().collect();
+        let visible = |recipient: usize| -> Vec<usize> {
+            names
+                .iter()
+                .enumerate()
+                .filter_map(|(index, sender)| {
+                    committee
+                        .selective_attack_allows_sender_to_recipient(sender, &names[recipient])
+                        .then_some(index)
+                })
+                .collect()
+        };
+        assert_eq!(committee.selective_attack_core_group_size(), 5);
+        assert_eq!(visible(0), vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(visible(1), vec![0, 2, 3, 4, 6, 7]);
+        assert_eq!(visible(4), vec![0, 1, 2, 3, 5, 9]);
+        assert_eq!(visible(5), vec![0, 1, 2, 3, 4, 6]);
+        assert_eq!(visible(6), vec![0, 1, 2, 3, 4, 7]);
+        assert_eq!(visible(9), vec![0, 1, 2, 3, 4, 5]);
     }
 
     #[test]
-    fn selective_attack_truncates_same_group_visibility_at_f_plus_one() {
-        let committee = attack_committee(10, 4);
-        let authorities: Vec<_> = committee.authorities.keys().copied().collect();
-        let recipient = authorities[0];
+    fn selective_attack_preserves_core_and_budget_for_uneven_groups() {
+        for size in 1..=10 {
+            let mut committee = attack_committee(size, size);
+            let names: Vec<_> = committee.authorities.keys().copied().collect();
+            for configured_core in 0..=size + 1 {
+                committee.attack_group_size = configured_core;
+                let core_size = committee.selective_attack_core_group_size();
+                for coverage in (core_size + usize::from(size > core_size))..=size + 1 {
+                    committee.coverage = coverage;
+                    for recipient in &names {
+                        let visible: Vec<_> = names
+                            .iter()
+                            .filter(|sender| {
+                                committee
+                                    .selective_attack_allows_sender_to_recipient(sender, recipient)
+                            })
+                            .collect();
+                        assert!(!visible.contains(&recipient));
+                        assert_eq!(visible.len() + 1, coverage.min(size));
+                        for core in committee.selective_attack_core_members() {
+                            assert!(core == recipient || visible.contains(&core));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
+    #[test]
+    fn selective_attack_rejects_budget_smaller_than_core_plus_self() {
+        let mut committee = attack_committee(10, 4);
+        committee.attack_enabled = true;
+        assert!(committee.validate_selective_attack().is_err());
+        committee.coverage = 5;
+        assert!(committee.validate_selective_attack().is_err());
+        committee.coverage = 6;
+        assert!(committee.validate_selective_attack().is_ok());
+        committee.coverage = 4;
+        committee.attack_group_size = 3;
+        assert!(committee.validate_selective_attack().is_ok());
+        committee.attack_group_size = 5;
+        committee.attack_enabled = false;
+        assert!(committee.validate_selective_attack().is_ok());
+    }
+
+    #[test]
+    fn selective_attack_handles_empty_and_unknown_authorities() {
+        let empty = attack_committee(0, 0);
+        assert_eq!(empty.selective_attack_core_group_size(), 0);
+        assert_eq!(empty.selective_attack_core_members().count(), 0);
+        let committee = attack_committee(4, 3);
+        let known = committee.authorities.keys().next().unwrap();
+        let (unknown, _) = generate_production_keypair();
+        assert!(committee.selective_attack_allows_sender_to_recipient(&unknown, known));
+        assert!(committee.selective_attack_allows_sender_to_recipient(known, &unknown));
         assert_eq!(
-            committee.selective_attack_same_group_remote_sender_limit(&recipient),
-            3
+            committee.selective_attack_other_group_sender_limit(&unknown),
+            0
         );
-        assert_eq!(committee.selective_attack_cross_group_sender_limit(&recipient), 0);
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[1],
-            &recipient
-        ));
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[2],
-            &recipient
-        ));
-        assert!(committee.selective_attack_allows_sender_to_recipient(
-            &authorities[3],
-            &recipient
-        ));
-        assert!(!committee.selective_attack_allows_sender_to_recipient(
-            &authorities[4],
-            &recipient
-        ));
-        assert!(!committee.selective_attack_allows_sender_to_recipient(
-            &authorities[5],
-            &recipient
-        ));
     }
 }

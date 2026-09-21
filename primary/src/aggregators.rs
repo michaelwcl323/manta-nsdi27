@@ -158,6 +158,7 @@ impl CertificatesAggregator {
         &mut self,
         certificate: Certificate,
         committee: &Committee,
+        require_core: bool,
     ) -> DagResult<Option<ProposalParents>> {
         let origin = certificate.origin();
 
@@ -248,6 +249,14 @@ impl CertificatesAggregator {
         //     }
         // }
 
+        // A count/union threshold cannot substitute for a missing mandatory core author.
+        // Only certificates from the immediately preceding round populate `used`.
+        if require_core {
+            self.has_quorum &= committee
+                .selective_attack_core_members()
+                .all(|author| self.used.contains(author));
+        }
+
         if self.has_quorum {
             if self.quorum_reached_time.is_none() {
                 self.quorum_reached_time = Some(Instant::now());
@@ -262,5 +271,116 @@ impl CertificatesAggregator {
             // }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{attack_committee, certificate, headers};
+
+    fn ordered_certificates(round: Round) -> Vec<Certificate> {
+        let mut headers = headers();
+        headers.sort_by_key(|header| header.author);
+        headers
+            .into_iter()
+            .map(|mut header| {
+                header.round = round;
+                header.solid_step_vertices = [header.id.clone()].iter().cloned().collect();
+                certificate(&header)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn waits_for_every_core_author_even_after_reference_is_met() {
+        let mut committee = attack_committee(3);
+        committee.reference = 2;
+        let certificates = ordered_certificates(1);
+        let mut aggregator = CertificatesAggregator::new(1);
+        for index in [0, 2, 3] {
+            assert!(aggregator
+                .append(certificates[index].clone(), &committee, true)
+                .unwrap()
+                .is_none());
+        }
+        assert!(aggregator
+            .append(certificates[1].clone(), &committee, true)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn weak_core_certificate_does_not_unlock_solid_round() {
+        let committee = attack_committee(3);
+        let certificates = ordered_certificates(2);
+        let mut aggregator = CertificatesAggregator::new(2);
+        for index in [0, 2, 3] {
+            assert!(aggregator
+                .append(certificates[index].clone(), &committee, true)
+                .unwrap()
+                .is_none());
+        }
+        let weak_core = ordered_certificates(1)[1].clone();
+        assert!(aggregator
+            .append(weak_core, &committee, true)
+            .unwrap()
+            .is_none());
+        assert!(aggregator
+            .append(certificates[1].clone(), &committee, true)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn core_does_not_replace_original_reference_threshold() {
+        let mut committee = attack_committee(4);
+        committee.reference = 4;
+        let certificates = ordered_certificates(1);
+        let mut aggregator = CertificatesAggregator::new(1);
+        for index in [0, 1, 2] {
+            assert!(aggregator
+                .append(certificates[index].clone(), &committee, true)
+                .unwrap()
+                .is_none());
+        }
+        assert!(aggregator
+            .append(certificates[3].clone(), &committee, true)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn outside_attack_window_original_threshold_is_sufficient() {
+        let mut committee = attack_committee(3);
+        committee.reference = 2;
+        let certificates = ordered_certificates(1);
+        let mut aggregator = CertificatesAggregator::new(1);
+        assert!(aggregator
+            .append(certificates[0].clone(), &committee, false)
+            .unwrap()
+            .is_none());
+        assert!(aggregator
+            .append(certificates[2].clone(), &committee, false)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn ending_attack_releases_core_requirement() {
+        let mut committee = attack_committee(3);
+        committee.reference = 2;
+        let certificates = ordered_certificates(1);
+        let mut aggregator = CertificatesAggregator::new(1);
+        for index in [0, 2] {
+            assert!(aggregator
+                .append(certificates[index].clone(), &committee, true)
+                .unwrap()
+                .is_none());
+        }
+        assert!(aggregator
+            .append(certificates[3].clone(), &committee, false)
+            .unwrap()
+            .is_some());
     }
 }

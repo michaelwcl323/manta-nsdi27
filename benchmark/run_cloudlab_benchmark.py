@@ -294,15 +294,16 @@ Examples:
                        help='Attack start time in seconds from run start')
     parser.add_argument('--attack-duration-secs', type=int, default=20,
                        help='Attack duration in seconds; 0 means keep attacking until the run ends')
-    parser.add_argument('--attack-group-size', type=int, default=5,
-                       help='Size of the first attack group; 0 splits nodes evenly')
+    parser.add_argument('--attack-group-size', '--attack-core-group-size',
+                       dest='attack_group_size', type=int, default=5,
+                       help='Fixed core group size; all nodes wait for this core during attack; 0 uses half the nodes')
     parser.add_argument('--attack-limit-headers', dest='attack_limit_headers', action='store_true',
-                       help='Limit cross-group header broadcasts during the attack window')
+                       help='Limit other-group header broadcasts during the attack window')
     parser.add_argument('--no-attack-limit-headers', dest='attack_limit_headers', action='store_false',
                        help='Do not limit header broadcasts during the attack window')
     parser.set_defaults(attack_limit_headers=False)
     parser.add_argument('--attack-limit-certificates', dest='attack_limit_certificates', action='store_true',
-                       help='Limit cross-group certificate broadcasts and sync replies during the attack window')
+                       help='Limit other-group certificate broadcasts and sync replies during the attack window')
     parser.add_argument('--no-attack-limit-certificates', dest='attack_limit_certificates', action='store_false',
                        help='Do not limit certificate broadcasts during the attack window')
     parser.set_defaults(attack_limit_certificates=True)

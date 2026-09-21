@@ -134,12 +134,13 @@ impl Core {
             tokio::time::sleep_until(attack_start).await;
             info!(
                 "start attack: headers_limited={} certificates_limited={} \
-                 start_secs={} duration_secs={} group_size={} kappa={} reference={} coverage={}",
+                 start_secs={} duration_secs={} core_group_size={} other_group_size={} kappa={} reference={} coverage={}",
                 committee.attack_limit_headers,
                 committee.attack_limit_certificates,
                 committee.attack_start_secs,
                 committee.attack_duration_secs,
-                committee.attack_group_size,
+                committee.selective_attack_core_group_size(),
+                committee.size() - committee.selective_attack_core_group_size(),
                 committee.kappa,
                 committee.reference,
                 committee.coverage,
@@ -545,12 +546,13 @@ impl Core {
         // Whichever round reaches the unlock condition first can be dispatched to proposer first.
         let target_round_start = certificate.round();
         let target_round_end = target_round_start + self.committee.solid_wave_length();
+        let require_core = self.attack_active_now();
         for target_round in target_round_start..target_round_end {
             if let Some(parents) = self
                 .certificates_aggregators
                 .entry(target_round)
                 .or_insert_with(|| Box::new(CertificatesAggregator::new(target_round)))
-                .append(certificate.clone(), &self.committee)?
+                .append(certificate.clone(), &self.committee, require_core)?
             {
                 // Send it to the `Proposer`.
                 self.tx_proposer

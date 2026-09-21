@@ -910,17 +910,17 @@ async fn process_certificates() {
 }
 
 #[test]
-fn selective_attack_keeps_only_minimal_cross_group_senders() {
+fn selective_attack_keeps_only_minimal_other_group_senders() {
     let committee = attack_committee(3);
     let authorities: Vec<_> = committee.authorities.keys().copied().collect();
 
-    let sender_same_group = authorities[1];
+    let sender_core_group = authorities[1];
     let sender_other_group_allowed = authorities[2];
     let sender_other_group_blocked = authorities[3];
     let recipient = authorities[0];
 
     assert!(committee.selective_attack_allows_sender_to_recipient(
-        &sender_same_group,
+        &sender_core_group,
         &recipient
     ));
     assert!(committee.selective_attack_allows_sender_to_recipient(
@@ -934,12 +934,13 @@ fn selective_attack_keeps_only_minimal_cross_group_senders() {
 }
 
 #[test]
-fn selective_attack_cuts_all_cross_group_senders_at_local_coverage() {
-    let committee = attack_committee(2);
+fn selective_attack_other_recipient_counts_itself_in_coverage() {
+    let mut committee = attack_committee(2);
+    committee.attack_group_size = 1;
     let authorities: Vec<_> = committee.authorities.keys().copied().collect();
-    let recipient = authorities[0];
+    let recipient = authorities[1];
 
-    assert_eq!(committee.selective_attack_cross_group_sender_limit(&recipient), 0);
+    assert_eq!(committee.selective_attack_other_group_sender_limit(&recipient), 0);
     assert!(!committee.selective_attack_allows_sender_to_recipient(
         &authorities[2],
         &recipient
