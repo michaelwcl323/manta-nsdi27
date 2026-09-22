@@ -595,7 +595,7 @@ class CloudLabBench:
         # Skip faulty nodes
         authorities = list(committee.json['authorities'].items())
         if faults > 0:
-            authorities = authorities[:-faults]
+            authorities = authorities[faults:]
         
         for name, authority in authorities:
             # Primary addresses
@@ -1637,8 +1637,8 @@ SCRIPTEOF'''
                 ValueError('Invalid rate_type')
             )
 
-        worker_index = 0
-        for i, addresses in enumerate(workers_addresses):
+        worker_index = faults * bench_parameters.workers
+        for i, addresses in enumerate(workers_addresses, start=faults):
             for (id, address) in addresses:
                 host_info = self._get_host_by_address(address, selected_hosts)
                 if not host_info:
@@ -1658,7 +1658,7 @@ SCRIPTEOF'''
 
         # 3. Run the primaries (except the faulty ones) – same order as Bench._run_single
         Print.info('Booting primaries...')
-        for i, address in enumerate(committee.primary_addresses(faults)):
+        for i, address in enumerate(committee.primary_addresses(faults), start=faults):
             host_info = self._get_host_by_address(address, selected_hosts)
             if not host_info:
                 Print.warn(f'Could not find host for address {address}')
@@ -1676,7 +1676,7 @@ SCRIPTEOF'''
 
         # 4. Run the workers (except the faulty ones) – same as Bench._run_single
         Print.info('Booting workers...')
-        for i, addresses in enumerate(workers_addresses):
+        for i, addresses in enumerate(workers_addresses, start=faults):
             for (id, address) in addresses:
                 host_info = self._get_host_by_address(address, selected_hosts)
                 if not host_info:
@@ -1837,4 +1837,3 @@ SCRIPTEOF'''
                             continue
         
         Print.heading('All benchmarks completed')
-
