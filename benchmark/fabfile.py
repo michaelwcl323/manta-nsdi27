@@ -267,8 +267,8 @@ def cloudlab_remote(
     debug=True,
     sigma=1,
     kappa=2,
-    reference=7,
-    coverage=7,
+    reference=4,
+    coverage=4,
 
 
     allow_cross_step_weak_edges=False,  # 跨solid-step的weak edges
@@ -307,9 +307,9 @@ def cloudlab_remote(
     adaptive_intermediate_spill_cap_digests=1,
 
     #会根据这些tag会自动生成目录，将运行结果分类 目录是 design_tag/network_tag/load_tag/
-    design_tag='debug_new',
+    design_tag='debug_0143am',
     network_tag='geo',
-    load_tag='k2c7',
+    load_tag='k2c4',
 ):
     ''' Run benchmarks on CloudLab '''
     allow_cross_step_weak_edges = _coerce_bool(allow_cross_step_weak_edges)

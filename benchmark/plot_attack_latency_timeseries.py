@@ -166,48 +166,46 @@ def load_consensus_latency_rows(
         return [], None
 
     raw_rows: list[dict[str, float]] = []
-    committed_send_ids: set[tuple[int, int]] = set()
+    consensus_by_batch: dict[str, dict[str, float]] = {}
     with latency_file.open(newline="") as f:
         reader = csv.DictReader(f)
-        metric = "end_to_end_latency" if time_axis == TIME_AXIS_SEND else "consensus_latency"
         for row in reader:
-            if row.get("metric") != metric:
+            if row.get("metric") != "consensus_latency":
                 continue
+            batch_id = row.get("identifier") or ""
             proposal_ts = row.get("proposal_ts")
             commit_ts = row.get("commit_ts")
             latency_ms = row.get("latency_ms")
-            if not proposal_ts or not latency_ms:
+            if not batch_id or not proposal_ts or not latency_ms:
                 continue
             proposal_value = float(proposal_ts)
             latency_value_s = float(latency_ms) / 1000.0
             commit_value = float(commit_ts) if commit_ts else proposal_value + latency_value_s
-            raw_rows.append(
-                {
-                    "proposal_ts": proposal_value,
-                    "commit_ts": commit_value,
-                    "latency_s": latency_value_s,
-                }
-            )
-            if time_axis == TIME_AXIS_SEND:
-                identifier = row.get("identifier") or ""
-                client_s, sep, tx_s = identifier.partition(":")
-                if sep and client_s.isdigit() and tx_s.isdigit():
-                    committed_send_ids.add((int(client_s), int(tx_s)))
+            parsed = {
+                "proposal_ts": proposal_value,
+                "commit_ts": commit_value,
+                "latency_s": latency_value_s,
+            }
+            raw_rows.append(parsed)
+            consensus_by_batch[batch_id] = parsed
 
     event_key = "commit_ts" if time_axis == TIME_AXIS_COMMIT else "proposal_ts"
     fallback = min((row["proposal_ts"] for row in raw_rows), default=None)
-    if fallback is None and time_axis != TIME_AXIS_SEND:
+    if fallback is None:
         return [], None
     primary_start = resolve_primary_start_ts(
         run_dir,
-        fallback if fallback is not None else 0.0,
+        fallback,
     )
-    if time_axis == TIME_AXIS_SEND and include_uncommitted:
-        raw_rows.extend(
-            _uncommitted_send_rows(run_dir, committed_send_ids, primary_start)
+    if time_axis == TIME_AXIS_SEND:
+        return (
+            _sampled_consensus_send_rows(
+                run_dir,
+                consensus_by_batch,
+                primary_start,
+            ),
+            primary_start,
         )
-    if not raw_rows:
-        return [], None
     return [
         {
             "aligned_time_s": row[event_key] - primary_start,
@@ -215,6 +213,69 @@ def load_consensus_latency_rows(
         }
         for row in raw_rows
     ], primary_start
+
+
+def _sampled_consensus_send_rows(
+    run_dir: Path,
+    consensus_by_batch: dict[str, dict[str, float]],
+    primary_start: float,
+) -> list[dict[str, float]]:
+    """Map each sampled client send to its batch's consensus latency."""
+    from benchmark.logs import _to_posix_utc
+
+    logs_dir = run_dir / "logs"
+    if not logs_dir.is_dir():
+        return []
+
+    batch_by_sample: dict[tuple[int, int, int], str] = {}
+    for path in sorted(logs_dir.glob("worker-*-*.log")):
+        name_match = search(r"worker-(\d+)-(\d+)\.log$", path.name)
+        if name_match is None:
+            continue
+        node = int(name_match.group(1))
+        worker = int(name_match.group(2))
+        with path.open(errors="replace") as f:
+            for line in f:
+                sample_match = search(r"Batch ([^ ]+) contains sample tx (\d+)", line)
+                if sample_match is None:
+                    continue
+                batch_by_sample[(node, worker, int(sample_match.group(2)))] = (
+                    sample_match.group(1)
+                )
+
+    rows: list[dict[str, float]] = []
+    seen: set[tuple[int, int, int]] = set()
+    for path in sorted(logs_dir.glob("client-*-*.log")):
+        name_match = search(r"client-(\d+)-(\d+)\.log$", path.name)
+        if name_match is None:
+            continue
+        node = int(name_match.group(1))
+        worker = int(name_match.group(2))
+        with path.open(errors="replace") as f:
+            for line in f:
+                sample_match = search(
+                    r"\[([^\s\]]+Z) .* sample transaction (\d+)",
+                    line,
+                )
+                if sample_match is None:
+                    continue
+                key = (node, worker, int(sample_match.group(2)))
+                if key in seen:
+                    continue
+                batch_id = batch_by_sample.get(key)
+                consensus = consensus_by_batch.get(batch_id or "")
+                if consensus is None:
+                    continue
+                seen.add(key)
+                send_ts = _to_posix_utc(sample_match.group(1))
+                rows.append(
+                    {
+                        "aligned_time_s": send_ts - primary_start,
+                        "latency_s": consensus["latency_s"],
+                    }
+                )
+
+    return rows
 
 
 UNCOMMITTED_END_S = 120.0
@@ -564,20 +625,30 @@ def aggregate_runs_disjoint(
     used_labels: set[str] = set()
     unaligned_attack_markers = 0
 
+    run_info: list[tuple[Path, dict, str]] = []
+    label_counts: dict[str, int] = defaultdict(int)
     for run_dir in run_dirs:
         metadata = load_run_metadata(run_dir)
         node_params = metadata.get("node_params", {})
         base = resolve_config_label(run_dir, node_params)
-        label = base
-        if label in used_labels:
-            short = run_dir.name
-            if len(short) > 40:
-                short = short[:37] + "..."
-            label = f"{base} ({short})"
-            suffix = 2
-            while label in used_labels:
-                label = f"{base} ({short}) #{suffix}"
-                suffix += 1
+        run_info.append((run_dir, metadata, base))
+        label_counts[base] += 1
+
+    for run_dir, metadata, base in run_info:
+        if label_counts[base] > 1:
+            timestamp_match = search(r"^\d{8}_(\d{2})(\d{2})(\d{2})", run_dir.name)
+            if timestamp_match:
+                sample_id = ":".join(timestamp_match.groups())
+            else:
+                sample_id = run_dir.name[:19]
+            label = f"{base} ({sample_id})"
+        else:
+            label = base
+        suffix = 2
+        original_label = label
+        while label in used_labels:
+            label = f"{original_label} #{suffix}"
+            suffix += 1
         used_labels.add(label)
 
         rows, primary_start_ts = load_consensus_latency_rows(run_dir, time_axis)
@@ -628,8 +699,15 @@ def ordered_labels(
     data: dict[str, list[dict[str, float]]],
     preferred: list[str],
 ) -> list[str]:
-    existing = [label for label in preferred if label in data]
-    remaining = sorted(label for label in data if label not in preferred)
+    existing: list[str] = []
+    for preferred_label in preferred:
+        matches = sorted(
+            label
+            for label in data
+            if label == preferred_label or label.startswith(f"{preferred_label} (")
+        )
+        existing.extend(label for label in matches if label not in existing)
+    remaining = sorted(label for label in data if label not in existing)
     return existing + remaining
 
 
@@ -754,7 +832,8 @@ def draw(
             series = aggregated[label]
             if not series:
                 continue
-            color = colors.get(label)
+            base_label = label.split(" (", 1)[0]
+            color = colors.get(base_label)
             if color is None:
                 color = fallback_cycle[idx % len(fallback_cycle)]
             xs = [point["x"] for point in series]
@@ -825,10 +904,25 @@ def draw(
             ax.set_title(title)
         if time_axis == TIME_AXIS_SEND:
             ax.set_xlabel("Client send time since primary start (s)")
-            ax.set_ylabel(rolling_latency_ylabel(rolling_stat).replace("latency", "send latency"))
+            ax.set_ylabel(
+                rolling_latency_ylabel(rolling_stat).replace(
+                    "latency", "consensus latency"
+                )
+            )
+        elif time_axis == TIME_AXIS_COMMIT:
+            ax.set_xlabel("Commit (receive) time since primary start (s)")
+            ax.set_ylabel(
+                rolling_latency_ylabel(rolling_stat).replace(
+                    "latency", "consensus latency"
+                )
+            )
         else:
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel(rolling_latency_ylabel(rolling_stat))
+            ax.set_xlabel("Proposal time since primary start (s)")
+            ax.set_ylabel(
+                rolling_latency_ylabel(rolling_stat).replace(
+                    "latency", "consensus latency"
+                )
+            )
         if y_log_scale:
             apply_log_scale_latency_below_cut(
                 ax,
@@ -999,7 +1093,8 @@ def parse_args() -> argparse.Namespace:
         default=TIME_AXIS_PROPOSAL,
         help=(
             "Align points by proposal time, commit time, or client send time. "
-            "Send time uses end-to-end latency (commit minus client send). "
+            "Send time maps sampled client transactions to their batches and "
+            "still uses consensus latency (commit minus proposal). "
             "Defaults to proposal time."
         ),
     )

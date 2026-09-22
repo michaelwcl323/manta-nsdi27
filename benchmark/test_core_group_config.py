@@ -15,10 +15,12 @@ class CoreGroupConfigTests(unittest.TestCase):
         )
 
     def test_rejects_core_that_exceeds_visibility_budget(self):
-        for coverage in (4, 5):
-            with self.subTest(coverage=coverage):
-                with self.assertRaisesRegex(ConfigError, 'must be at least 6'):
-                    self.committee(coverage)
+        with self.assertRaisesRegex(ConfigError, 'must be at least 6'):
+            self.committee(5)
+
+    def test_coverage_four_uses_three_core_authors_plus_self(self):
+        committee = self.committee(4)
+        self.assertEqual(committee.json['coverage'], 4)
 
     def test_accepts_core_plus_other_recipient(self):
         committee = self.committee(6)

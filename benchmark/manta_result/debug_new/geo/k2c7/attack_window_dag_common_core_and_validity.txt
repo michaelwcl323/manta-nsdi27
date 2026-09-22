@@ -1,0 +1,253 @@
+Attack-window DAG analysis: common-core construction AND validity threshold
+Source: debug_new k2-c7 and k3-c7 (2026-09-21), n=10, coverage=7, attack_group_size=5, certificate-drop attack.
+Logs: logs/primary-*.log  (Round snapshots + DAG_COMMIT_CHECK).
+
+Comparison
+  Common core (same attack graph for both runs):
+    Core = nodes 0-4, always delivered to every recipient.
+    Each view is core + 1 or 2 other-group authors (coverage=7).
+    Intersection of all 10 views = {0,1,2,3,4}.
+    In the live DAG, vertices that do form typically carry all 5 core authors as prev-round strong parents (see examples). Some rounds miss one core author (k2 often misses 2/3; k3 often misses 1 or 4), so require_core can stall proposing.
+  Validity threshold = 4 (f+1):
+    k2-c7 during attack: met on 241/423 checks (57.0%), mean stake ~4.6; many failures at stake 0 or 3.
+    k3-c7 during attack: met on 198/285 checks (69.5%), mean stake ~6.1; failures are almost all stake=0, successes are 7-10.
+
+===== k2-c7 =====
+run_dir: 20260921_154407_535488_cloudlab-n10-r100000-run1-s1-k2-ref7-tag-debug_new
+kappa=2 coverage=7 wave_len=2 n=10
+validity_threshold=(n+2)/3=4   processing_threshold(solid step)=coverage=7
+attack_start_secs=60 attack_group_size=5 limit_certificates=True
+
+--- 1. How the common core is built ---
+Authorities are ordered by public-key bytes (BTreeMap).
+Common core = first attack_group_size=5 keys = node ids 0,1,2,3,4.
+Other group = node ids 5,6,7,8,9.
+Certificate broadcast during attack:
+  - every core sender is delivered to every recipient (mandatory shared core);
+  - remaining coverage budget is filled from the other group, wrapping from the recipient rank;
+  - coverage=7 => core recipient keeps 2 extra other-senders; other recipient keeps 1 extra other-sender (self already counted).
+Proposer unlock during attack (CertificatesAggregator.require_core=true):
+  round r cannot fire until ALL 5 core authors are in `used` (previous-round certificates).
+  Hitting coverage=7 by count/union does NOT replace a missing core author.
+
+Expected visible authors per recipient:
+  recipient  0 [CORE ] sees [0, 1, 2, 3, 4, 5, 6]  extra_other=[5, 6]  |core|=5
+  recipient  1 [CORE ] sees [0, 1, 2, 3, 4, 6, 7]  extra_other=[6, 7]  |core|=5
+  recipient  2 [CORE ] sees [0, 1, 2, 3, 4, 7, 8]  extra_other=[7, 8]  |core|=5
+  recipient  3 [CORE ] sees [0, 1, 2, 3, 4, 8, 9]  extra_other=[8, 9]  |core|=5
+  recipient  4 [CORE ] sees [0, 1, 2, 3, 4, 5, 9]  extra_other=[5, 9]  |core|=5
+  recipient  5 [OTHER] sees [0, 1, 2, 3, 4, 5, 6]  extra_other=[6]  |core|=5
+  recipient  6 [OTHER] sees [0, 1, 2, 3, 4, 6, 7]  extra_other=[7]  |core|=5
+  recipient  7 [OTHER] sees [0, 1, 2, 3, 4, 7, 8]  extra_other=[8]  |core|=5
+  recipient  8 [OTHER] sees [0, 1, 2, 3, 4, 8, 9]  extra_other=[9]  |core|=5
+  recipient  9 [OTHER] sees [0, 1, 2, 3, 4, 5, 9]  extra_other=[5]  |core|=5
+Intersection across all 10 views (graph-theoretic common core): [0, 1, 2, 3, 4]
+
+Empirical DAG (complete snapshots only: >=5 vertices, after attack start, latest rounds):
+  snapshot vertex-set size min/median/max=5/10/10
+  snapshots containing all 5 core vertices: 50 ok / 10 missing
+  missing-core snapshots:
+    observer=0 round=1738 authors=[0, 1, 4, 5, 9] missing_core=[2, 3]
+    observer=1 round=1738 authors=[0, 1, 4, 5, 6] missing_core=[2, 3]
+    observer=2 round=1732 authors=[0, 1, 2, 4, 5, 6, 7, 8, 9] missing_core=[3]
+    observer=3 round=1738 authors=[0, 1, 4, 5, 6] missing_core=[2, 3]
+    observer=4 round=1732 authors=[0, 1, 2, 4, 5, 6, 7, 8, 9] missing_core=[3]
+    observer=5 round=1732 authors=[0, 1, 2, 4, 5, 6, 7, 8, 9] missing_core=[3]
+  vertices whose prev-round strong parents include all 5 core authors: 316 ok / 229 missing
+  vertices missing a core parent:
+    observer=0 round=1733 vertex=0 core_parents=[0, 1, 2, 4] missing=[3] all_prev=[0, 1, 2, 4, 5, 8]
+    observer=0 round=1733 vertex=1 core_parents=[0, 1, 2, 4] missing=[3] all_prev=[0, 1, 2, 4, 6, 7]
+    observer=0 round=1733 vertex=2 core_parents=[0, 1, 2, 4] missing=[3] all_prev=[0, 1, 2, 4, 7, 8]
+    observer=0 round=1733 vertex=3 core_parents=[0, 1, 2, 4] missing=[3] all_prev=[0, 1, 2, 4, 8, 9]
+    observer=0 round=1733 vertex=4 core_parents=[0, 1, 2, 4] missing=[3] all_prev=[0, 1, 2, 4, 5, 9]
+    observer=0 round=1733 vertex=5 core_parents=[0, 1, 2, 4] missing=[3] all_prev=[0, 1, 2, 4, 5, 8, 9]
+  example observer=0 round=1738 vertices=[0, 1, 4, 5, 9]
+    V0 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+    V1 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V4 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+    V5 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+    V9 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+  example observer=5 round=1737 vertices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    V0 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6] core_hit=[0, 1, 2, 3, 4]
+    V1 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V2 prev-round strong parents=[0, 1, 2, 3, 4, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V3 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V4 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+    V5 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6] core_hit=[0, 1, 2, 3, 4]
+    V6 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V7 prev-round strong parents=[0, 1, 2, 3, 4, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V8 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V9 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+  example observer=9 round=1737 vertices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    V0 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6] core_hit=[0, 1, 2, 3, 4]
+    V1 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V2 prev-round strong parents=[0, 1, 2, 3, 4, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V3 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V4 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+    V5 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6] core_hit=[0, 1, 2, 3, 4]
+    V6 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V7 prev-round strong parents=[0, 1, 2, 3, 4, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V8 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V9 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+
+--- 2. Does the DAG meet validity_threshold? ---
+Commit check: stake of support_round certs that include the leader in solid_wave_vertices
+must be >= validity_threshold=4. Logged as DAG_COMMIT_CHECK threshold=4.
+This is independent of coverage=7 (used only to unlock proposing on solid steps).
+Canonical observer: primary-2.log node_id=0 attack_ts=2026-09-21 15:45:14.606000+00:00 first_ts=2026-09-21 15:44:14.605000+00:00
+  start attack: headers_limited=false certificates_limited=true start_secs=60 duration_secs=1000 core_group_size=5 other_group_size=5 kappa=2 reference=7 coverage=7
+  node0 BEFORE attack: n=1243 results={'insufficient_stake': 443, 'committed': 800} threshold=[4] stake min/p50/mean/max=0/7/5.5/10 stake<threshold=443/1243 (35.6%) support_set contains all 5 core=255/1243
+  node0 DURING attack: n=60 results={'committed': 24, 'insufficient_stake': 36} threshold=[4] stake min/p50/mean/max=0/3/3.6/9 stake<threshold=36/60 (60.0%) support_set contains all 5 core=11/60
+  ALL NODES before: n=12400 results={'insufficient_stake': 4401, 'committed': 7999} threshold=[4] stake min/p50/mean/max=0/7/5.5/10 stake<threshold=4401/12400 (35.5%) support_set contains all 5 core=2620/12400
+  ALL NODES during: n=423 results={'committed': 241, 'insufficient_stake': 182} threshold=[4] stake min/p50/mean/max=0/4/4.6/10 stake<threshold=182/423 (43.0%) support_set contains all 5 core=111/423
+  per-node DURING attack: fail_below_4 / n_checks, mean_stake, committed, support_has_full_core
+    node 0: 36/60  mean_stake=3.57  committed=24  full_core_in_support=11
+    node 1: 25/49  mean_stake=4.00  committed=24  full_core_in_support=11
+    node 2: 10/33  mean_stake=5.27  committed=23  full_core_in_support=10
+    node 3: 24/48  mean_stake=4.02  committed=24  full_core_in_support=11
+    node 4: 9/33  mean_stake=5.45  committed=24  full_core_in_support=11
+    node 5: 14/38  mean_stake=5.16  committed=24  full_core_in_support=11
+    node 6: 13/37  mean_stake=5.14  committed=24  full_core_in_support=11
+    node 7: 27/52  mean_stake=3.96  committed=25  full_core_in_support=12
+    node 8: 13/38  mean_stake=5.29  committed=25  full_core_in_support=12
+    node 9: 11/35  mean_stake=5.43  committed=24  full_core_in_support=11
+  during-attack stake histogram: 0:48, 2:20, 3:114, 4:82, 5:24, 6:8, 7:30, 8:42, 9:34, 10:21
+  during-attack (stake,result): (0, 'insufficient_stake'):48, (2, 'insufficient_stake'):20, (3, 'insufficient_stake'):114, (4, 'committed'):82, (5, 'committed'):24, (6, 'committed'):8, (7, 'committed'):30, (8, 'committed'):42, (9, 'committed'):34, (10, 'committed'):21
+  sample checks that MISS validity (>=4):
+    t=2026-09-21 15:45:25.634000+00:00 leader=(1695,n5) support_r=1696 stake=0/4 set=[]
+    t=2026-09-21 15:45:25.634000+00:00 leader=(1695,n5) support_r=1696 stake=0/4 set=[]
+    t=2026-09-21 15:45:25.635000+00:00 leader=(1695,n5) support_r=1696 stake=0/4 set=[]
+    t=2026-09-21 15:45:25.636000+00:00 leader=(1695,n5) support_r=1696 stake=0/4 set=[]
+    t=2026-09-21 15:45:25.686000+00:00 leader=(1695,n5) support_r=1696 stake=0/4 set=[]
+  sample checks that MEET validity and commit:
+    t=2026-09-21 15:45:14.626000+00:00 leader=(1687,n7) support_r=1688 stake=9/4 set=[0, 1, 2, 3, 4, 5, 6, 7, 9]
+    t=2026-09-21 15:45:16.915000+00:00 leader=(1689,n9) support_r=1690 stake=5/4 set=[0, 3, 4, 8, 9]
+    t=2026-09-21 15:45:18.704000+00:00 leader=(1691,n1) support_r=1692 stake=8/4 set=[0, 1, 2, 3, 4, 5, 6, 9]
+    t=2026-09-21 15:45:20.721000+00:00 leader=(1693,n3) support_r=1694 stake=8/4 set=[0, 1, 2, 3, 4, 5, 7, 8]
+  DURING attack: validity met on 241/423 checks (57.0%).
+
+Verdict:
+  Common core in attack DAG snapshots: 83.3% of complete snapshots contain vertices 0-4; 58.0% of vertices have all 5 core authors as prev-round strong parents.
+  Validity threshold (4): met on 57.0% of during-attack commit checks.
+
+
+===== k3-c7 =====
+run_dir: 20260921_154859_760488_cloudlab-n10-r100000-run1-s1-k3-ref7-tag-debug_new
+kappa=3 coverage=7 wave_len=3 n=10
+validity_threshold=(n+2)/3=4   processing_threshold(solid step)=coverage=7
+attack_start_secs=60 attack_group_size=5 limit_certificates=True
+
+--- 1. How the common core is built ---
+Authorities are ordered by public-key bytes (BTreeMap).
+Common core = first attack_group_size=5 keys = node ids 0,1,2,3,4.
+Other group = node ids 5,6,7,8,9.
+Certificate broadcast during attack:
+  - every core sender is delivered to every recipient (mandatory shared core);
+  - remaining coverage budget is filled from the other group, wrapping from the recipient rank;
+  - coverage=7 => core recipient keeps 2 extra other-senders; other recipient keeps 1 extra other-sender (self already counted).
+Proposer unlock during attack (CertificatesAggregator.require_core=true):
+  round r cannot fire until ALL 5 core authors are in `used` (previous-round certificates).
+  Hitting coverage=7 by count/union does NOT replace a missing core author.
+
+Expected visible authors per recipient:
+  recipient  0 [CORE ] sees [0, 1, 2, 3, 4, 5, 6]  extra_other=[5, 6]  |core|=5
+  recipient  1 [CORE ] sees [0, 1, 2, 3, 4, 6, 7]  extra_other=[6, 7]  |core|=5
+  recipient  2 [CORE ] sees [0, 1, 2, 3, 4, 7, 8]  extra_other=[7, 8]  |core|=5
+  recipient  3 [CORE ] sees [0, 1, 2, 3, 4, 8, 9]  extra_other=[8, 9]  |core|=5
+  recipient  4 [CORE ] sees [0, 1, 2, 3, 4, 5, 9]  extra_other=[5, 9]  |core|=5
+  recipient  5 [OTHER] sees [0, 1, 2, 3, 4, 5, 6]  extra_other=[6]  |core|=5
+  recipient  6 [OTHER] sees [0, 1, 2, 3, 4, 6, 7]  extra_other=[7]  |core|=5
+  recipient  7 [OTHER] sees [0, 1, 2, 3, 4, 7, 8]  extra_other=[8]  |core|=5
+  recipient  8 [OTHER] sees [0, 1, 2, 3, 4, 8, 9]  extra_other=[9]  |core|=5
+  recipient  9 [OTHER] sees [0, 1, 2, 3, 4, 5, 9]  extra_other=[5]  |core|=5
+Intersection across all 10 views (graph-theoretic common core): [0, 1, 2, 3, 4]
+
+Empirical DAG (complete snapshots only: >=5 vertices, after attack start, latest rounds):
+  snapshot vertex-set size min/median/max=8/10/10
+  snapshots containing all 5 core vertices: 51 ok / 9 missing
+  missing-core snapshots:
+    observer=0 round=1743 authors=[0, 1, 2, 3, 5, 6, 7, 8, 9] missing_core=[4]
+    observer=1 round=1743 authors=[0, 1, 2, 3, 5, 6, 7, 8, 9] missing_core=[4]
+    observer=3 round=1743 authors=[0, 1, 2, 3, 5, 6, 7, 8, 9] missing_core=[4]
+    observer=4 round=1743 authors=[0, 1, 2, 3, 5, 6, 7, 8, 9] missing_core=[4]
+    observer=5 round=1740 authors=[0, 2, 3, 4, 5, 6, 7, 8, 9] missing_core=[1]
+    observer=6 round=1743 authors=[0, 1, 2, 3, 5, 6, 7, 8, 9] missing_core=[4]
+  vertices whose prev-round strong parents include all 5 core authors: 343 ok / 242 missing
+  vertices missing a core parent:
+    observer=0 round=1741 vertex=0 core_parents=[0, 2, 3, 4] missing=[1] all_prev=[0, 2, 3, 4, 5, 6]
+    observer=0 round=1741 vertex=1 core_parents=[0, 2, 3, 4] missing=[1] all_prev=[0, 2, 3, 4, 6, 7]
+    observer=0 round=1741 vertex=2 core_parents=[0, 2, 3, 4] missing=[1] all_prev=[0, 2, 3, 4, 7, 8]
+    observer=0 round=1741 vertex=3 core_parents=[0, 2, 3, 4] missing=[1] all_prev=[0, 2, 3, 4, 5, 8, 9]
+    observer=0 round=1741 vertex=4 core_parents=[0, 2, 3, 4] missing=[1] all_prev=[0, 2, 3, 4, 5, 9]
+    observer=0 round=1741 vertex=5 core_parents=[0, 2, 3, 4] missing=[1] all_prev=[0, 2, 3, 4, 5, 6]
+  example observer=0 round=1746 vertices=[0, 1, 2, 3, 4, 5, 6, 7, 8]
+    V0 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V1 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V2 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V3 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V4 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6, 9] core_hit=[0, 1, 2, 3, 4]
+    V5 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6] core_hit=[0, 1, 2, 3, 4]
+    V6 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V7 prev-round strong parents=[0, 1, 2, 3, 4, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V8 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+  example observer=5 round=1745 vertices=[0, 1, 2, 3, 4, 5, 6, 9]
+    V0 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6, 9] core_hit=[0, 1, 2, 3, 4]
+    V1 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V2 prev-round strong parents=[0, 1, 2, 3, 4, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V3 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V4 prev-round strong parents=[0, 1, 2, 3, 4, 5, 9] core_hit=[0, 1, 2, 3, 4]
+    V5 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6] core_hit=[0, 1, 2, 3, 4]
+    V6 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V9 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6, 9] core_hit=[0, 1, 2, 3, 4]
+  example observer=9 round=1746 vertices=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    V0 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V1 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7] core_hit=[0, 1, 2, 3, 4]
+    V2 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V3 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V4 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6, 9] core_hit=[0, 1, 2, 3, 4]
+    V5 prev-round strong parents=[0, 1, 2, 3, 4, 5, 6] core_hit=[0, 1, 2, 3, 4]
+    V6 prev-round strong parents=[0, 1, 2, 3, 4, 6, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V7 prev-round strong parents=[0, 1, 2, 3, 4, 7, 8] core_hit=[0, 1, 2, 3, 4]
+    V8 prev-round strong parents=[0, 1, 2, 3, 4, 8, 9] core_hit=[0, 1, 2, 3, 4]
+    V9 prev-round strong parents=[0, 1, 2, 3, 4, 6, 9] core_hit=[0, 1, 2, 3, 4]
+
+--- 2. Does the DAG meet validity_threshold? ---
+Commit check: stake of support_round certs that include the leader in solid_wave_vertices
+must be >= validity_threshold=4. Logged as DAG_COMMIT_CHECK threshold=4.
+This is independent of coverage=7 (used only to unlock proposing on solid steps).
+Canonical observer: primary-2.log node_id=0 attack_ts=2026-09-21 15:50:07.043000+00:00 first_ts=2026-09-21 15:49:07.042000+00:00
+  start attack: headers_limited=false certificates_limited=true start_secs=60 duration_secs=1000 core_group_size=5 other_group_size=5 kappa=3 reference=7 coverage=7
+  node0 BEFORE attack: n=614 results={'insufficient_stake': 70, 'committed': 544} threshold=[4] stake min/p50/mean/max=0/8/7.3/10 stake<threshold=70/614 (11.4%) support_set contains all 5 core=215/614
+  node0 DURING attack: n=29 results={'committed': 22, 'insufficient_stake': 7} threshold=[4] stake min/p50/mean/max=0/8/6.4/10 stake<threshold=7/29 (24.1%) support_set contains all 5 core=19/29
+  ALL NODES before: n=6151 results={'insufficient_stake': 691, 'committed': 5460} threshold=[4] stake min/p50/mean/max=0/8/7.3/10 stake<threshold=691/6151 (11.2%) support_set contains all 5 core=2084/6151
+  ALL NODES during: n=285 results={'committed': 198, 'insufficient_stake': 87} threshold=[4] stake min/p50/mean/max=0/8/6.1/10 stake<threshold=87/285 (30.5%) support_set contains all 5 core=183/285
+  per-node DURING attack: fail_below_4 / n_checks, mean_stake, committed, support_has_full_core
+    node 0: 7/29  mean_stake=6.45  committed=22  full_core_in_support=19
+    node 1: 7/28  mean_stake=6.46  committed=21  full_core_in_support=19
+    node 2: 9/31  mean_stake=6.23  committed=22  full_core_in_support=19
+    node 3: 9/30  mean_stake=6.40  committed=21  full_core_in_support=19
+    node 4: 6/27  mean_stake=6.93  committed=21  full_core_in_support=19
+    node 5: 16/34  mean_stake=4.47  committed=18  full_core_in_support=17
+    node 6: 7/25  mean_stake=6.28  committed=18  full_core_in_support=18
+    node 7: 9/26  mean_stake=5.73  committed=17  full_core_in_support=17
+    node 8: 11/29  mean_stake=5.62  committed=18  full_core_in_support=18
+    node 9: 6/26  mean_stake=6.69  committed=20  full_core_in_support=18
+  during-attack stake histogram: 0:87, 7:35, 8:50, 9:40, 10:73
+  during-attack (stake,result): (0, 'insufficient_stake'):87, (7, 'committed'):35, (8, 'committed'):50, (9, 'committed'):40, (10, 'committed'):73
+  sample checks that MISS validity (>=4):
+    t=2026-09-21 15:50:26.264000+00:00 leader=(1708,n8) support_r=1710 stake=0/4 set=[]
+    t=2026-09-21 15:50:26.278000+00:00 leader=(1708,n8) support_r=1710 stake=0/4 set=[]
+    t=2026-09-21 15:50:26.279000+00:00 leader=(1708,n8) support_r=1710 stake=0/4 set=[]
+    t=2026-09-21 15:50:26.280000+00:00 leader=(1708,n8) support_r=1710 stake=0/4 set=[]
+    t=2026-09-21 15:50:26.282000+00:00 leader=(1708,n8) support_r=1710 stake=0/4 set=[]
+  sample checks that MEET validity and commit:
+    t=2026-09-21 15:50:07.068000+00:00 leader=(1678,n8) support_r=1680 stake=7/4 set=[1, 2, 3, 4, 6, 7, 8]
+    t=2026-09-21 15:50:07.194000+00:00 leader=(1681,n1) support_r=1683 stake=8/4 set=[0, 1, 2, 3, 4, 5, 6, 8]
+    t=2026-09-21 15:50:07.296000+00:00 leader=(1684,n4) support_r=1686 stake=8/4 set=[1, 2, 3, 4, 5, 6, 7, 8]
+    t=2026-09-21 15:50:07.400000+00:00 leader=(1687,n7) support_r=1689 stake=7/4 set=[0, 1, 4, 5, 6, 7, 8]
+  DURING attack: validity met on 198/285 checks (69.5%).
+
+Verdict:
+  Common core in attack DAG snapshots: 85.0% of complete snapshots contain vertices 0-4; 58.6% of vertices have all 5 core authors as prev-round strong parents.
+  Validity threshold (4): met on 69.5% of during-attack commit checks.
+
