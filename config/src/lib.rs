@@ -421,12 +421,12 @@ impl Committee {
     }
 
     /// n=10, coverage=7, core={0..4}: every recipient uses extra fringe pairs
-    /// 56, 68, 78, 68, 69 (self is never broadcast).
+    /// 56, 68, 78, 59, 69 (self is never broadcast).
     const N10_C7_FRINGE_EXTRAS: [&'static [usize]; 10] = [
         &[5, 6],
         &[6, 8],
         &[7, 8],
-        &[6, 8],
+        &[5, 9],
         &[6, 9],
         &[6],
         &[8],
@@ -848,7 +848,7 @@ mod tests {
         assert_eq!(visible(0), vec![1, 2, 3, 4, 5, 6]);
         assert_eq!(visible(1), vec![0, 2, 3, 4, 6, 8]);
         assert_eq!(visible(2), vec![0, 1, 3, 4, 7, 8]);
-        assert_eq!(visible(3), vec![0, 1, 2, 4, 6, 8]);
+        assert_eq!(visible(3), vec![0, 1, 2, 4, 5, 9]);
         assert_eq!(visible(4), vec![0, 1, 2, 3, 6, 9]);
         assert_eq!(visible(5), vec![0, 1, 2, 3, 4, 6]);
         assert_eq!(visible(6), vec![0, 1, 2, 3, 4, 8]);
