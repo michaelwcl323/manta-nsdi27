@@ -347,12 +347,16 @@ impl Committee {
         self.coverage as Stake
     }
 
-    /// Fixed core size. Keep the legacy split/default and clamp behavior.
+    /// Fixed core size. Coverage 4 uses three core authors, leaving the
+    /// fourth slot for the recipient itself. Other coverage values keep the
+    /// configured split/default and clamp behavior.
     pub fn selective_attack_core_group_size(&self) -> usize {
         match self.size() {
             0 | 1 => self.size(),
             size => {
-                let configured = if self.attack_group_size == 0 {
+                let configured = if self.coverage == 4 {
+                    3
+                } else if self.attack_group_size == 0 {
                     size / 2
                 } else {
                     self.attack_group_size
@@ -890,7 +894,8 @@ mod tests {
     fn selective_attack_rejects_budget_smaller_than_core_plus_self() {
         let mut committee = attack_committee(10, 4);
         committee.attack_enabled = true;
-        assert!(committee.validate_selective_attack().is_err());
+        assert_eq!(committee.selective_attack_core_group_size(), 3);
+        assert!(committee.validate_selective_attack().is_ok());
         committee.coverage = 5;
         assert!(committee.validate_selective_attack().is_err());
         committee.coverage = 6;
@@ -901,6 +906,27 @@ mod tests {
         committee.attack_group_size = 5;
         committee.attack_enabled = false;
         assert!(committee.validate_selective_attack().is_ok());
+    }
+
+    #[test]
+    fn selective_attack_coverage_four_uses_three_core_authors_plus_self() {
+        let mut committee = attack_committee(10, 4);
+        committee.attack_group_size = 5;
+        let names: Vec<_> = committee.authorities.keys().copied().collect();
+
+        assert_eq!(committee.selective_attack_core_group_size(), 3);
+        for recipient in &names[3..] {
+            let visible: Vec<_> = names
+                .iter()
+                .enumerate()
+                .filter_map(|(index, sender)| {
+                    committee
+                        .selective_attack_allows_sender_to_recipient(sender, recipient)
+                        .then_some(index)
+                })
+                .collect();
+            assert_eq!(visible, vec![0, 1, 2]);
+        }
     }
 
     #[test]
