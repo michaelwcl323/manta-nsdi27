@@ -71,8 +71,11 @@ class Committee:
         # counts itself, so the old visibility cap must have room for both.
         if attack_enabled:
             size = len(addresses)
+            configured_core_size = (
+                3 if coverage == 4 else attack_group_size or size // 2
+            )
             core_size = size if size <= 1 else min(
-                max(attack_group_size or size // 2, 1), size - 1
+                max(configured_core_size, 1), size - 1
             )
             required = core_size + int(size > core_size)
             if coverage < required:
