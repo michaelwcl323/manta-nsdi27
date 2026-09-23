@@ -90,24 +90,45 @@ class Committee:
                 'workers': workers_addr
             }
 
-    def primary_addresses(self, faults=0):
-        ''' Returns an ordered list of primaries' addresses. '''
-        assert faults < self.size()
-        addresses = []
-        # Fault injection uses crash-stop nodes at the beginning of the
-        # committee order. Keep the full committee in the configuration so
-        # quorum thresholds are unchanged, but only return surviving nodes.
-        for authority in list(self.json['authorities'].values())[faults:]:
-            addresses += [authority['primary']['primary_to_primary']]
-        return addresses
+    def resolve_fault_indices(self, faults=0, fault_indices=None):
+        '''Return sorted 0-based authority indices that stay offline (silent).
 
-    def workers_addresses(self, faults=0):
+        Default (fault_indices is None): the first `faults` authorities,
+        matching the historical `[faults:]` boot filter.
+        '''
+        n = self.size()
+        if fault_indices is None:
+            assert isinstance(faults, int) and 0 <= faults < n
+            return list(range(faults))
+        indices = sorted({int(i) for i in fault_indices})
+        assert all(0 <= i < n for i in indices), (
+            f'fault_indices={indices} out of range for committee size {n}'
+        )
+        assert len(indices) < n, 'Cannot silence the entire committee'
+        return indices
+
+    def alive_indices(self, faults=0, fault_indices=None):
+        '''Return sorted 0-based authority indices that should be booted.'''
+        faulty = set(self.resolve_fault_indices(faults, fault_indices))
+        return [i for i in range(self.size()) if i not in faulty]
+
+    def primary_addresses(self, faults=0, fault_indices=None):
+        ''' Returns an ordered list of primaries' addresses. '''
+        authorities = list(self.json['authorities'].values())
+        # Keep the full committee in the configuration so quorum thresholds
+        # are unchanged, but only return surviving (non-silent) nodes.
+        return [
+            authorities[i]['primary']['primary_to_primary']
+            for i in self.alive_indices(faults, fault_indices)
+        ]
+
+    def workers_addresses(self, faults=0, fault_indices=None):
         ''' Returns an ordered list of list of workers' addresses. '''
-        assert faults < self.size()
+        authorities = list(self.json['authorities'].values())
         addresses = []
-        for authority in list(self.json['authorities'].values())[faults:]:
+        for i in self.alive_indices(faults, fault_indices):
             authority_addresses = []
-            for id, worker in authority['workers'].items():
+            for id, worker in authorities[i]['workers'].items():
                 authority_addresses += [(id, worker['transactions'])]
             addresses.append(authority_addresses)
         return addresses
@@ -197,6 +218,20 @@ class BenchParameters:
         try:
             self.faults = int(json['faults'])
 
+            raw_indices = json.get('fault_indices')
+            if raw_indices is None:
+                # Historical default: silence the first `faults` authorities.
+                self.fault_indices = list(range(self.faults))
+            else:
+                if not isinstance(raw_indices, list):
+                    raise ConfigError('fault_indices must be a list of ints')
+                self.fault_indices = sorted({int(x) for x in raw_indices})
+                if len(self.fault_indices) != self.faults:
+                    raise ConfigError(
+                        f'faults={self.faults} must equal '
+                        f'len(fault_indices)={len(self.fault_indices)}'
+                    )
+
             nodes = json['nodes']
             nodes = nodes if isinstance(nodes, list) else [nodes]
             if not nodes or any(x <= 1 for x in nodes):
@@ -231,6 +266,11 @@ class BenchParameters:
 
         if min(self.nodes) <= self.faults:
             raise ConfigError('There should be more nodes than faults')
+        for n in self.nodes:
+            if any(i < 0 or i >= n for i in self.fault_indices):
+                raise ConfigError(
+                    f'fault_indices={self.fault_indices} out of range for nodes={n}'
+                )
 
 
 class PlotParameters:
