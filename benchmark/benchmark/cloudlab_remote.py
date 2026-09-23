@@ -263,19 +263,19 @@ class CloudLabBench:
             echo "Hostname: $(hostname)" &&
             echo "---" &&
             echo "Running processes:" &&
-            (pgrep -f "node.*primary" > /dev/null && echo "  [OK] Primary: running" || echo "  [FAIL] Primary: not running") &&
-            (pgrep -f "node.*worker" > /dev/null && echo "  [OK] Worker: running" || echo "  [FAIL] Worker: not running") &&
-            (pgrep -f "benchmark_client" > /dev/null && echo "  [OK] Client: running" || echo "  [FAIL] Client: not running") &&
+            (pgrep -f "[n]ode.*primary" > /dev/null && echo "  [OK] Primary: running" || echo "  [FAIL] Primary: not running") &&
+            (pgrep -f "[n]ode.*worker" > /dev/null && echo "  [OK] Worker: running" || echo "  [FAIL] Worker: not running") &&
+            (pgrep -f "[b]enchmark_client" > /dev/null && echo "  [OK] Client: running" || echo "  [FAIL] Client: not running") &&
             echo "---" &&
             echo "Process count:" &&
-            echo "  Primary: $(pgrep -f 'node.*primary' | wc -l)" &&
-            echo "  Worker: $(pgrep -f 'node.*worker' | wc -l)" &&
-            echo "  Client: $(pgrep -f 'benchmark_client' | wc -l)" &&
+            echo "  Primary: $(pgrep -f '[n]ode.*primary' | wc -l)" &&
+            echo "  Worker: $(pgrep -f '[n]ode.*worker' | wc -l)" &&
+            echo "  Client: $(pgrep -f '[b]enchmark_client' | wc -l)" &&
             echo "---" &&
             echo "Process details:" &&
-            (pgrep -f "node.*primary" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No primary processes") &&
-            (pgrep -f "node.*worker" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No worker processes") &&
-            (pgrep -f "benchmark_client" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No client processes")
+            (pgrep -f "[n]ode.*primary" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No primary processes") &&
+            (pgrep -f "[n]ode.*worker" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No worker processes") &&
+            (pgrep -f "[b]enchmark_client" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No client processes")
         '''
         
         try:
@@ -358,13 +358,13 @@ class CloudLabBench:
             echo "=== Debugging $(hostname) ===" &&
             echo "--- Running Processes ---" &&
             echo "Primary processes:" &&
-            (pgrep -f "node.*primary" | xargs ps -fp 2>/dev/null || echo "  No primary processes") &&
+            (pgrep -f "[n]ode.*primary" | xargs ps -fp 2>/dev/null || echo "  No primary processes") &&
             echo "" &&
             echo "Worker processes:" &&
-            (pgrep -f "node.*worker" | xargs ps -fp 2>/dev/null || echo "  No worker processes") &&
+            (pgrep -f "[n]ode.*worker" | xargs ps -fp 2>/dev/null || echo "  No worker processes") &&
             echo "" &&
             echo "Client processes:" &&
-            (pgrep -f "benchmark_client" | xargs ps -fp 2>/dev/null || echo "  No client processes") &&
+            (pgrep -f "[b]enchmark_client" | xargs ps -fp 2>/dev/null || echo "  No client processes") &&
             echo "" &&
             echo "--- Log files in {repo_name}/logs ---" &&
             (ls -lh {repo_name}/logs/*.log 2>/dev/null | head -10 || echo "No log files found") &&
@@ -505,13 +505,16 @@ class CloudLabBench:
         # This will kill all processes matching the benchmark patterns
         # Broad patterns: match release binary and client even if argv layout differs.
         kill_cmd = '''
-            pkill -9 -f "target/release/node" 2>/dev/null || true
-            pkill -9 -f "[./]*node .*-vv run" 2>/dev/null || true
-            pkill -9 -f "[./]*node .* run --keys" 2>/dev/null || true
-            pkill -9 -f "node.*primary" 2>/dev/null || true
-            pkill -9 -f "node.*worker" 2>/dev/null || true
-            pkill -9 -f "benchmark_client" 2>/dev/null || true
-            pkill -9 -f "/tmp/run_(primary|worker|client)-" 2>/dev/null || true
+            # Bracket one mandatory character in every target name. Since Fabric
+            # passes this whole block via ``bash -c``, literal patterns can match
+            # and kill the cleanup shell itself when used with ``pkill -f``.
+            pkill -9 -f "target/release/[n]ode" 2>/dev/null || true
+            pkill -9 -f "[./]*[n]ode .*-vv run" 2>/dev/null || true
+            pkill -9 -f "[./]*[n]ode .* run --keys" 2>/dev/null || true
+            pkill -9 -f "[n]ode.*primary" 2>/dev/null || true
+            pkill -9 -f "[n]ode.*worker" 2>/dev/null || true
+            pkill -9 -f "[b]enchmark_client" 2>/dev/null || true
+            pkill -9 -f "/tmp/[r]un_(primary|worker|client)-" 2>/dev/null || true
             true
         '''
         # Cleanup database directories and lock files
@@ -546,6 +549,7 @@ class CloudLabBench:
                         hide=True,
                         warn=True,
                         shell='/bin/bash',
+                        in_stream=False,
                     )
                     
                     # Kill processes using committee ports on these hosts
@@ -585,6 +589,7 @@ class CloudLabBench:
                         hide=True,
                         warn=True,
                         shell='/bin/bash',
+                        in_stream=False,
                     )
                     
                     # Kill processes using committee ports on these hosts
@@ -633,7 +638,7 @@ class CloudLabBench:
 
         # Match the same process families we kill. Keep the check itself out of matches.
         check_cmd = (
-            "pgrep -af 'target/release/node|benchmark_client|/tmp/run_(primary|worker|client)-' "
+            "pgrep -af 'target/release/[n]ode|[b]enchmark_client|/tmp/[r]un_(primary|worker|client)-' "
             "2>/dev/null || true"
         )
 
