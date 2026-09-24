@@ -13,7 +13,8 @@ from this laptop**; the controller SSHs to replica hosts.
 
 ```text
 experiment_reproduced/experiment2/
-  run_figure10.py                # local entry (SSH -> controller)
+  run_figure10.py                # local entry (SSH -> controller orchestrator)
+  run_figure10c_fab.py           # Figure 10(c) via fab cloudlab-remote (recommended)
   matrix.yaml                    # 10a/10b/10c cells + scenario params
   wan/
     cloudlab_settings_geo.json   # paper N2 geo 6+3+1 (same as Experiment 1)
@@ -22,7 +23,7 @@ experiment_reproduced/experiment2/
     prepare_repo.sh              # clone/build ON each replica
   results/
     Figure10a_10b/                 # consensus_summary.csv only (plot input)
-    Figure10c/                     # {k2-ref4,...}/latency.csv only (plot input)
+    Figure10c/                     # {k2-ref4,...}/latency.csv + send_samples.csv
 ```
 
 ## Scenario switching
@@ -61,6 +62,19 @@ python experiment_reproduced/experiment2/run_figure10.py --skip-plot
 python experiment_reproduced/experiment2/run_figure10.py --keep-remote-workdir
 ```
 
+## Figure 10(c) via fab (recommended)
+
+One-cell-at-a-time on branch ``experiment2_attack`` (clears netem, runs the four
+attack cells, syncs ``send_samples.csv``, draws the default send-time overlay):
+
+```bash
+python experiment_reproduced/experiment2/run_figure10c_fab.py
+# optional: --skip-wan-clear | --only k2c7 | --skip-plot | --order k3c7,k3c10,k2c4,k2c7
+```
+
+Prefer this over ``run_figure10.py --only-suite figure10c`` when reproducing the
+paper attack figure.
+
 ## Parameter matrix (paper)
 
 | Suite | Figure | Notes |
@@ -98,8 +112,9 @@ Defaults (no extra flags needed): ``--time-axis send``, ``--rolling-stat mean``,
 order ``k2-c4,k2-c7,k3-c7,k3-c10``, attack window 60–120s, data-driven y-axis
 (client send time × cumulative mean consensus latency). Each
 ``Figure10c/{label}/`` must include ``latency.csv`` **and** ``send_samples.csv``
-(extracted on the controller; AE sync pulls both). ``run_figure10.py`` uses the
-same defaults and also copies to ``attack_latency_timeseries_overlay_mean.{pdf,png}``.
+(extracted on the controller; AE sync pulls both). ``run_figure10.py`` /
+``run_figure10c_fab.py`` use the same defaults and also copy to
+``attack_latency_timeseries_overlay_mean.{pdf,png}``.
 
 ## Notes
 

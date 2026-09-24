@@ -1,12 +1,15 @@
 # Figure 10 reproduction matrix (Experiment 2).
 #
-# Flat manta protocol on branch `experiment2_attack` (repo root = protocol tree).
+# Per-suite protocol branch (flat tree at branch root):
+#   - figure10a_10b → experiment2
+#   - figure10c     → experiment2_attack
 # Scenario switching is owned by the controller runner:
-#   1) suite (figure10a_10b | figure10c) -> design_tag / attack / load_tag
+#   1) suite → branch / design_tag / attack / load_tag / network
 #   2) network: figure10a_10b uses geo WAN; figure10c is nodelay (clear netem only)
-#   3) cell (sigma/kappa/reference[/coverage]) -> node_params + CloudLabBench
+#   3) cell (sigma/kappa/reference[/coverage]) → node_params + CloudLabBench
 
-branch: experiment2_attack
+# Default branch for suites that omit `branch` (Figure 10a/10b).
+branch: experiment2
 monorepo_name: manta-nsdi27
 
 # Default WAN profile for suites that need geo (10a/10b). Figure 10c forces nodelay.
@@ -41,6 +44,7 @@ defaults:
 suites:
   figure10a_10b:
     figure: Figure10a_10b
+    branch: experiment2
     design_tag: manta_experiment2
     network_tag: geo
     load_tag: balanced_50_50
@@ -53,6 +57,7 @@ suites:
     reference: [4, 7, 10]
   figure10c:
     figure: Figure10c
+    branch: experiment2_attack
     design_tag: experiment2_attack_final
     network_tag: nodelay
     # Per-cell load_tag is set by the orchestrator to k{κ}c{cov} (e.g. k2c4).

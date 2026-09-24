@@ -270,7 +270,8 @@ results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.pdf
 results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.png
 ```
 
-(`run_figure10.py` also copies these to `attack_latency_timeseries_overlay_mean.{pdf,png}`.)
+(`run_figure10.py` / `run_figure10c_fab.py` also copy these to
+`attack_latency_timeseries_overlay_mean.{pdf,png}`.)
 
 Each command succeeds if the corresponding PDF is created and the script prints the output path.
 
@@ -459,8 +460,17 @@ See `experiment_reproduced/experiment2/matrix.yaml` and `README.md`.
 
 ```bash
 # CloudLab up + Getting Started first (see Section 3)
+
+# Figure 10(a)/(b) + optional 10(c) via the matrix orchestrator
 python experiment_reproduced/experiment2/run_figure10.py
 # optional: --only-suite figure10a_10b | figure10c
+
+# Figure 10(c) recommended path: one-cell-at-a-time fab on experiment2_attack
+# (clears netem, runs k2c4/k2c7/k3c7/k3c10, syncs send_samples, draws the
+# default send-time overlay). Prefer this over --only-suite figure10c when
+# reproducing the paper attack figure.
+python experiment_reproduced/experiment2/run_figure10c_fab.py
+# optional: --skip-wan-clear | --only k2c7 | --skip-plot
 ```
 
 #### Output
@@ -475,7 +485,8 @@ experiment_reproduced/experiment2/results/Figure10c/{k2-ref4,k2-ref7,k3-ref7,k3-
 
 `run_figure10.py` then **directly calls** the Figure 10 plot scripts (same as §4.2) and
 writes PDFs/PNGs under `results/regenerate_graphs/`. Use `--skip-plot` to skip.
-Figure 10(c) defaults to send-time × cumulative-mean
+`run_figure10c_fab.py` does the same for Figure 10(c) after the four fab cells finish
+(unless `--skip-plot`). Figure 10(c) defaults to send-time × cumulative-mean
 (`attack_latency_timeseries_overlay_mean_send_time.{pdf,png}`).
 
 #### Expected Result
