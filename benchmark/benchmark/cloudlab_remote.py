@@ -263,19 +263,19 @@ class CloudLabBench:
             echo "Hostname: $(hostname)" &&
             echo "---" &&
             echo "Running processes:" &&
-            (pgrep -f "[n]ode.*primary" > /dev/null && echo "  [OK] Primary: running" || echo "  [FAIL] Primary: not running") &&
-            (pgrep -f "[n]ode.*worker" > /dev/null && echo "  [OK] Worker: running" || echo "  [FAIL] Worker: not running") &&
-            (pgrep -f "[b]enchmark_client" > /dev/null && echo "  [OK] Client: running" || echo "  [FAIL] Client: not running") &&
+            (pgrep -f "node.*primary" > /dev/null && echo "  [OK] Primary: running" || echo "  [FAIL] Primary: not running") &&
+            (pgrep -f "node.*worker" > /dev/null && echo "  [OK] Worker: running" || echo "  [FAIL] Worker: not running") &&
+            (pgrep -f "benchmark_client" > /dev/null && echo "  [OK] Client: running" || echo "  [FAIL] Client: not running") &&
             echo "---" &&
             echo "Process count:" &&
-            echo "  Primary: $(pgrep -f '[n]ode.*primary' | wc -l)" &&
-            echo "  Worker: $(pgrep -f '[n]ode.*worker' | wc -l)" &&
-            echo "  Client: $(pgrep -f '[b]enchmark_client' | wc -l)" &&
+            echo "  Primary: $(pgrep -f 'node.*primary' | wc -l)" &&
+            echo "  Worker: $(pgrep -f 'node.*worker' | wc -l)" &&
+            echo "  Client: $(pgrep -f 'benchmark_client' | wc -l)" &&
             echo "---" &&
             echo "Process details:" &&
-            (pgrep -f "[n]ode.*primary" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No primary processes") &&
-            (pgrep -f "[n]ode.*worker" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No worker processes") &&
-            (pgrep -f "[b]enchmark_client" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No client processes")
+            (pgrep -f "node.*primary" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No primary processes") &&
+            (pgrep -f "node.*worker" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No worker processes") &&
+            (pgrep -f "benchmark_client" | xargs ps -p 2>/dev/null | tail -n +2 || echo "  No client processes")
         '''
         
         try:
@@ -358,13 +358,13 @@ class CloudLabBench:
             echo "=== Debugging $(hostname) ===" &&
             echo "--- Running Processes ---" &&
             echo "Primary processes:" &&
-            (pgrep -f "[n]ode.*primary" | xargs ps -fp 2>/dev/null || echo "  No primary processes") &&
+            (pgrep -f "node.*primary" | xargs ps -fp 2>/dev/null || echo "  No primary processes") &&
             echo "" &&
             echo "Worker processes:" &&
-            (pgrep -f "[n]ode.*worker" | xargs ps -fp 2>/dev/null || echo "  No worker processes") &&
+            (pgrep -f "node.*worker" | xargs ps -fp 2>/dev/null || echo "  No worker processes") &&
             echo "" &&
             echo "Client processes:" &&
-            (pgrep -f "[b]enchmark_client" | xargs ps -fp 2>/dev/null || echo "  No client processes") &&
+            (pgrep -f "benchmark_client" | xargs ps -fp 2>/dev/null || echo "  No client processes") &&
             echo "" &&
             echo "--- Log files in {repo_name}/logs ---" &&
             (ls -lh {repo_name}/logs/*.log 2>/dev/null | head -10 || echo "No log files found") &&
@@ -443,7 +443,7 @@ class CloudLabBench:
         except:
             pass  # Ignore errors in port killing
     
-    def _get_ports_from_committee(self, committee, faults, fault_indices=None):
+    def _get_ports_from_committee(self, committee, faults):
         """Extract all ports that will be used by the committee"""
         ports_by_host = {}  # {hostname: set of ports}
         host_info = self.manager.get_host_info()
@@ -464,14 +464,10 @@ class CloudLabBench:
                 ip_to_hostname[hostname] = hostname
         
         # Extract all addresses from committee JSON structure
-        # Skip silent/faulty nodes (by index set, defaulting to first `faults`).
+        # Skip faulty nodes
         authorities = list(committee.json['authorities'].items())
-        alive = set(committee.alive_indices(faults, fault_indices))
-        authorities = [
-            (name, authority)
-            for i, (name, authority) in enumerate(authorities)
-            if i in alive
-        ]
+        if faults > 0:
+            authorities = authorities[faults:]
         
         for name, authority in authorities:
             # Primary addresses
@@ -497,7 +493,7 @@ class CloudLabBench:
         
         return ports_by_host
     
-    def kill(self, hosts=[], delete_logs=False, committee=None, faults=0, fault_indices=None):
+    def kill(self, hosts=[], delete_logs=False, committee=None, faults=0):
         """Stop execution on specified hosts"""
         assert isinstance(hosts, list)
         assert isinstance(delete_logs, bool)
@@ -509,16 +505,13 @@ class CloudLabBench:
         # This will kill all processes matching the benchmark patterns
         # Broad patterns: match release binary and client even if argv layout differs.
         kill_cmd = '''
-            # Bracket one mandatory character in every target name. Since Fabric
-            # passes this whole block via ``bash -c``, literal patterns can match
-            # and kill the cleanup shell itself when used with ``pkill -f``.
-            pkill -9 -f "target/release/[n]ode" 2>/dev/null || true
-            pkill -9 -f "[./]*[n]ode .*-vv run" 2>/dev/null || true
-            pkill -9 -f "[./]*[n]ode .* run --keys" 2>/dev/null || true
-            pkill -9 -f "[n]ode.*primary" 2>/dev/null || true
-            pkill -9 -f "[n]ode.*worker" 2>/dev/null || true
-            pkill -9 -f "[b]enchmark_client" 2>/dev/null || true
-            pkill -9 -f "/tmp/[r]un_(primary|worker|client)-" 2>/dev/null || true
+            pkill -9 -f "target/release/node" 2>/dev/null || true
+            pkill -9 -f "[./]*node .*-vv run" 2>/dev/null || true
+            pkill -9 -f "[./]*node .* run --keys" 2>/dev/null || true
+            pkill -9 -f "node.*primary" 2>/dev/null || true
+            pkill -9 -f "node.*worker" 2>/dev/null || true
+            pkill -9 -f "benchmark_client" 2>/dev/null || true
+            pkill -9 -f "/tmp/run_(primary|worker|client)-" 2>/dev/null || true
             true
         '''
         # Cleanup database directories and lock files
@@ -528,7 +521,7 @@ class CloudLabBench:
         # If committee is provided, also kill processes using the ports
         ports_by_host = {}
         if committee is not None:
-            ports_by_host = self._get_ports_from_committee(committee, faults, fault_indices)
+            ports_by_host = self._get_ports_from_committee(committee, faults)
         
         try:
             if not hosts:
@@ -553,7 +546,6 @@ class CloudLabBench:
                         hide=True,
                         warn=True,
                         shell='/bin/bash',
-                        in_stream=False,
                     )
                     
                     # Kill processes using committee ports on these hosts
@@ -593,7 +585,6 @@ class CloudLabBench:
                         hide=True,
                         warn=True,
                         shell='/bin/bash',
-                        in_stream=False,
                     )
                     
                     # Kill processes using committee ports on these hosts
@@ -616,7 +607,6 @@ class CloudLabBench:
         delete_logs=False,
         committee=None,
         faults=0,
-        fault_indices=None,
         *,
         retries: int = 8,
         settle_secs: float = 1.0,
@@ -643,7 +633,7 @@ class CloudLabBench:
 
         # Match the same process families we kill. Keep the check itself out of matches.
         check_cmd = (
-            "pgrep -af 'target/release/[n]ode|[b]enchmark_client|/tmp/[r]un_(primary|worker|client)-' "
+            "pgrep -af 'target/release/node|benchmark_client|/tmp/run_(primary|worker|client)-' "
             "2>/dev/null || true"
         )
 
@@ -654,7 +644,6 @@ class CloudLabBench:
                 delete_logs=delete_logs and attempt == 1,
                 committee=committee,
                 faults=faults,
-                fault_indices=fault_indices,
             )
             time.sleep(settle_secs)
 
@@ -1532,25 +1521,18 @@ SCRIPTEOF'''
         from time import sleep
 
         faults = bench_parameters.faults
-        fault_indices = getattr(bench_parameters, 'fault_indices', None)
 
         # 1. Kill any potentially unfinished run and delete logs (same intent as Bench._run_single)
         Print.info('Killing any existing processes and ports...')
         self.kill_and_ensure_clean(
-            hosts=selected_hosts,
-            delete_logs=True,
-            committee=committee,
-            faults=faults,
-            fault_indices=fault_indices,
+            hosts=selected_hosts, delete_logs=True, committee=committee, faults=faults
         )
 
         # Small delay to ensure processes are killed and database cleanup completes
         sleep(3)
 
-        # Pre-compute surviving authority indices and worker addresses.
-        alive = committee.alive_indices(faults, fault_indices)
-        workers_addresses = committee.workers_addresses(faults, fault_indices)
-        Print.info(f'Silent fault indices={committee.resolve_fault_indices(faults, fault_indices)}; alive={alive}')
+        # Pre-compute workers' addresses (filtered for faults) – same as Bench._run_single
+        workers_addresses = committee.workers_addresses(faults)
 
         # 2. Run the clients first (they will wait for the nodes to be ready)
         #    This mirrors benchmark/benchmark/remote.py::_run_single
@@ -1577,14 +1559,14 @@ SCRIPTEOF'''
                 ValueError('Invalid rate_type')
             )
 
-        for i, addresses in zip(alive, workers_addresses):
+        worker_index = faults * bench_parameters.workers
+        for i, addresses in enumerate(workers_addresses, start=faults):
             for (id, address) in addresses:
                 host_info = self._get_host_by_address(address, selected_hosts)
                 if not host_info:
                     Print.warn(f'Could not find host for address {address}')
                     continue
 
-                worker_index = i * bench_parameters.workers + int(id)
                 client_rate = worker_rates[min(worker_index, len(worker_rates) - 1)]
                 cmd = CommandMaker.run_client(
                     address,
@@ -1594,10 +1576,11 @@ SCRIPTEOF'''
                 )
                 log_file = PathMaker.client_log_file(i, id)
                 self._background_run(host_info, cmd, log_file)
+                worker_index += 1
 
         # 3. Run the primaries (except the faulty ones) – same order as Bench._run_single
         Print.info('Booting primaries...')
-        for i, address in zip(alive, committee.primary_addresses(faults, fault_indices)):
+        for i, address in enumerate(committee.primary_addresses(faults), start=faults):
             host_info = self._get_host_by_address(address, selected_hosts)
             if not host_info:
                 Print.warn(f'Could not find host for address {address}')
@@ -1615,7 +1598,7 @@ SCRIPTEOF'''
 
         # 4. Run the workers (except the faulty ones) – same as Bench._run_single
         Print.info('Booting workers...')
-        for i, addresses in zip(alive, workers_addresses):
+        for i, addresses in enumerate(workers_addresses, start=faults):
             for (id, address) in addresses:
                 host_info = self._get_host_by_address(address, selected_hosts)
                 if not host_info:
