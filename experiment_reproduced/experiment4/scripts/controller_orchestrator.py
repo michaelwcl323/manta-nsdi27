@@ -763,6 +763,14 @@ def collect_figure12_suite(bench_dir: Path, suite: dict, out_dir: Path) -> tuple
         count += 1
         print(f"[exp4] Figure12/{variant} collected {dest.name}", flush=True)
 
+        timing_path = run_dir / "round_wave_timing.csv"
+        if timing_path.is_file():
+            timing_dest = out_dir / f"{run_dir.name}.round_wave_timing.csv"
+            shutil.copy2(timing_path, timing_dest)
+            print(f"[exp4] Figure12/{variant} collected {timing_dest.name}", flush=True)
+        else:
+            print(f"[exp4] missing round_wave_timing.csv under {run_dir}", flush=True)
+
         res_path = run_dir / "resource_usage_summary.txt"
         if res_path.is_file():
             # Keep a copy next to the summary for Table2 sync.

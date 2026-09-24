@@ -177,6 +177,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
     )
     p.add_argument("--skip-prepare", action="store_true", help="Skip clone/build on replicas and controller")
+    p.add_argument(
+        "--skip-wan",
+        action="store_true",
+        help="Clear tc-netem only; do not apply geo delay (LAN / no-delay)",
+    )
     p.add_argument("--skip-plot", action="store_true", help="Do not call Figure 10 plot scripts after sync")
     p.add_argument(
         "--plot-output-dir",
@@ -274,31 +279,35 @@ def plot_figure10(local_results: Path, only_suite: str | None, output_dir: Path)
                     flush=True,
                 )
             merge_option = "--merge-four-runs" if len(run_dirs) == 4 else "--merge-runs"
+            # Defaults in plot_attack_latency_timeseries.py are already the paper
+            # Figure 10c style: send-time × cumulative mean, order k2-c4…k3-c10,
+            # attack 60–120s, data-driven y. Keep output name explicit for AE.
             rc = run(
                 [
                     sys.executable,
                     str(plot_c),
                     merge_option,
                     *[str(p) for p in run_dirs],
-                    "--time-axis",
-                    "commit",
-                    "--rolling-stat",
-                    "mean",
-                    "--attack-start-secs",
-                    "60",
-                    "--attack-end-secs",
-                    "120",
                     "--order",
                     ",".join(FIGURE10C_ORDER),
                     "--output",
-                    str(output_dir / "attack_latency_timeseries_overlay_mean.pdf"),
-                    "--auto-limits",
+                    str(output_dir / "attack_latency_timeseries_overlay_mean_send_time.pdf"),
                 ],
                 check=False,
             ).returncode
             if rc != 0:
                 failures += 1
                 print(f"[exp2-local] plot 10c failed (rc={rc})", flush=True)
+            else:
+                # Primary deliverable is send-time; also keep legacy filename as a copy.
+                src_pdf = output_dir / "attack_latency_timeseries_overlay_mean_send_time.pdf"
+                src_png = output_dir / "attack_latency_timeseries_overlay_mean_send_time.png"
+                for src, dst_name in (
+                    (src_pdf, "attack_latency_timeseries_overlay_mean.pdf"),
+                    (src_png, "attack_latency_timeseries_overlay_mean.png"),
+                ):
+                    if src.is_file():
+                        shutil.copy2(src, output_dir / dst_name)
 
     return failures
 
@@ -431,6 +440,8 @@ def main() -> int:
         orch_args.extend(["--only-suite", args.only_suite])
     if args.skip_prepare:
         orch_args.append("--skip-prepare")
+    if args.skip_wan:
+        orch_args.append("--skip-wan")
 
     remote_cmd = (
         f"chmod +x {remote_workdir}/scripts/*.sh {remote_workdir}/scripts/*.py; "
@@ -526,6 +537,30 @@ def main() -> int:
         ).returncode
         if rc_c == 0:
             print(f"[exp2-local] synced {local_label / 'latency.csv'}", flush=True)
+            rc_send = subprocess.run(
+                [
+                    "scp",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "IdentitiesOnly=yes",
+                    "-o",
+                    f"ConnectTimeout={args.connect_timeout}",
+                    "-i",
+                    str(key),
+                    f"{username}@{controller}:{remote_workdir}/results/Figure10c/{label}/send_samples.csv",
+                    str(local_label / "send_samples.csv"),
+                ],
+                check=False,
+            ).returncode
+            if rc_send == 0:
+                print(f"[exp2-local] synced {local_label / 'send_samples.csv'}", flush=True)
+            else:
+                print(
+                    f"[exp2-local] skip sync Figure10c/{label}/send_samples.csv "
+                    "(not present or scp failed)",
+                    flush=True,
+                )
         else:
             print(f"[exp2-local] skip sync Figure10c/{label} (not present or scp failed)", flush=True)
             # Remove empty label dir if nothing landed.

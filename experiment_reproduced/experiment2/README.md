@@ -1,7 +1,12 @@
 # Experiment 2 / Figure 10 — controller-driven reproduction
 
-Scripts and results for re-running paper Figure 10 with the `experiment2` branch
-(flat manta protocol at repo root). **Only the CloudLab controller is contacted
+Scripts and results for re-running paper Figure 10. Protocol branches are split
+by suite in `matrix.yaml`:
+
+- **Figure 10(a)/(b)** → `experiment2`
+- **Figure 10(c)** → `experiment2_attack`
+
+(flat trees at each branch root). **Only the CloudLab controller is contacted
 from this laptop**; the controller SSHs to replica hosts.
 
 ## Layout
@@ -35,7 +40,8 @@ all finish → then geo delay setup + experiments (never overlap).
 
 1. CloudLab experiment is up (`portal_experiment.py` + `wait_*`).
 2. Getting Started deployed (`python cloudlab/deploy_environment.py --skip-functional-test` is enough).
-3. Remote `origin` has branch `experiment2` (or controller/replicas can fetch it).
+3. Remote `origin` has branches `experiment2` and `experiment2_attack`
+   (controller/replicas can fetch both).
 4. `cloudlab_settings.json` has replica `hosts` (`10.10.1.1`–`10.10.1.10`) and SSH key.
 
 ## Run all of Figure 10
@@ -85,11 +91,15 @@ python paper_data/graph_generated_code/experiment2/plot_attack_latency_timeserie
     experiment_reproduced/experiment2/results/Figure10c/k2-ref7 \
     experiment_reproduced/experiment2/results/Figure10c/k3-ref7 \
     experiment_reproduced/experiment2/results/Figure10c/k3-ref10 \
-  --time-axis commit --rolling-stat mean \
-  --attack-start-secs 60 --attack-end-secs 120 \
-  --order k2-c4,k2-c7,k3-c7,k3-c10 \
-  --output results/regenerate_graphs/attack_latency_timeseries_overlay_mean.pdf
+  --output results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.pdf
 ```
+
+Defaults (no extra flags needed): ``--time-axis send``, ``--rolling-stat mean``,
+order ``k2-c4,k2-c7,k3-c7,k3-c10``, attack window 60–120s, data-driven y-axis
+(client send time × cumulative mean consensus latency). Each
+``Figure10c/{label}/`` must include ``latency.csv`` **and** ``send_samples.csv``
+(extracted on the controller; AE sync pulls both). ``run_figure10.py`` uses the
+same defaults and also copies to ``attack_latency_timeseries_overlay_mean.{pdf,png}``.
 
 ## Notes
 
@@ -101,5 +111,7 @@ python paper_data/graph_generated_code/experiment2/plot_attack_latency_timeserie
 - WAN is applied only to replica `hosts`. The controller is not a peer, so
   **controller↔replica latency stays 0** (SSH also bypasses netem via TCP/22 exclusion).
 - Collect / sync back to the laptop is **plot inputs only**:
-  `consensus_summary.csv` for 10(a)/(b), and `Figure10c/{label}/latency.csv` for 10(c).
-  No raw dumps, logs, png/pdf intermediates.
+  `consensus_summary.csv` for 10(a)/(b), and `Figure10c/{label}/latency.csv` plus
+  `send_samples.csv` for 10(c). `send_samples.csv` is extracted on the controller
+  from client/worker logs (send time joined to consensus latency). Raw logs are
+  not synced. No raw dumps, png/pdf intermediates.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Prepare flat experiment2 protocol tree on a replica (or controller).
+# Prepare a flat Experiment 2 protocol tree on a replica (or controller).
 # Usage: prepare_repo.sh <repo_dir> <branch> <repo_url>
+# Typical branches: experiment2 (Figure 10a/10b), experiment2_attack (Figure 10c).
 set -euo pipefail
 
 REPO_DIR="${1:?repo dir}"

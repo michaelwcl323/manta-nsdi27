@@ -65,7 +65,11 @@ experiments:
 
   experiment2:
     branch: experiment2
-    description: Figure 10 parameter trade-offs (flat Manta at branch root; sweeps sigma/kappa/reference)
+    description: Figure 10(a)/(b) parameter trade-offs (flat Manta at branch root; sweeps sigma/kappa/reference)
+
+  experiment2_attack:
+    branch: experiment2_attack
+    description: Figure 10(c) selective cert-limit attack (flat Manta; AE suite figure10c only)
 
   experiment3:
     description: Figure 11 protocol comparison

@@ -241,31 +241,36 @@ results/regenerate_graphs/reference_impact_kappa2_by_sigma.pdf
 
 #### Figure 10(c)
 
-Attack-window latency timeseries overlay from `paper_data/original_data/Figure10c/`.
+Attack-window latency timeseries overlay. Prefer AE reproduction outputs under
+`experiment_reproduced/experiment2/results/Figure10c/{k2-ref4,…}/` (each with
+`latency.csv` + `send_samples.csv`). Paper-original dirs under
+`paper_data/original_data/Figure10c/` also work when they include send samples.
 
 Main script: `plot_attack_latency_timeseries.py` (imports the shared helpers above).
+
+Defaults are the paper style: **client send time × cumulative mean**, order
+`k2-c4,k2-c7,k3-c7,k3-c10`, attack 60–120s, data-driven y-axis.
 
 ```bash
 cd paper_data/graph_generated_code/experiment2
 
 python3 plot_attack_latency_timeseries.py \
   --merge-four-runs \
-    ../../original_data/Figure10c/20260419_092353_560935_cloudlab-n10-r100000-run1-s1-k2-ref4-tag-experiment2_attack_final_latency.csv \
-    ../../original_data/Figure10c/20260419_123518_715243_cloudlab-n10-r100000-run1-s1-k2-ref7-tag-experiment2_attack_final_latency.csv \
-    ../../original_data/Figure10c/20260419_092900_079578_cloudlab-n10-r100000-run1-s1-k3-ref7-tag-experiment2_attack_final_latency.csv \
-    ../../original_data/Figure10c/20260419_093137_848886_cloudlab-n10-r100000-run1-s1-k3-ref10-tag-experiment2_attack_final_latency.csv \
-  --time-axis commit \
-  --rolling-stat mean \
-  --attack-start-secs 60 \
-  --attack-end-secs 120 \
-  --output ../../../results/regenerate_graphs/attack_latency_timeseries_overlay_mean.pdf
+    ../../../experiment_reproduced/experiment2/results/Figure10c/k2-ref4 \
+    ../../../experiment_reproduced/experiment2/results/Figure10c/k2-ref7 \
+    ../../../experiment_reproduced/experiment2/results/Figure10c/k3-ref7 \
+    ../../../experiment_reproduced/experiment2/results/Figure10c/k3-ref10 \
+  --output ../../../results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.pdf
 ```
 
 Output:
 
 ```text
-results/regenerate_graphs/attack_latency_timeseries_overlay_mean.pdf
+results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.pdf
+results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.png
 ```
+
+(`run_figure10.py` also copies these to `attack_latency_timeseries_overlay_mean.{pdf,png}`.)
 
 Each command succeeds if the corresponding PDF is created and the script prints the output path.
 
@@ -335,23 +340,27 @@ Plotting / aggregation code for Experiment 4 lives in
 
 #### Figure 12
 
-Compare complete Manta against the no-flexible-coin ablation at input rates
+Compare complete Manta, the no-flexible-coin ablation, and
+**no flexible coin & growth** (Tusk-like / `tusk_performance`) at input rates
 $80000$, $100000$, and $120000$ tx/s.
 
 - **complete** (default): Manta rows from
   `paper_data/original_data/Figure11a/geo_consensus_tps_latency.csv`
 - **complete** (reproduction): pass `--complete-dir` with summary `*.txt` averages
 - **no flexible coin**: averages of summary `*.txt` under `--noflexible-dir`
-  (default `paper_data/original_data/Figure12/`)
+  (default `paper_data/original_data/Figure12/` top-level txts)
+- **no flexible coin & growth**: averages under `--nogrowth-dir`
+  (default `paper_data/original_data/Figure12/tusk_performance/`)
 
 ```bash
-# paper original data (Figure11a CSV + Figure12 txts)
+# paper original data (Figure11a CSV + Figure12 txts + tusk_performance)
 python3 paper_data/graph_generated_code/experiment4/plot_manta_consensus_tps_latency.py
 
 # after CloudLab reproduction
 python3 paper_data/graph_generated_code/experiment4/plot_manta_consensus_tps_latency.py \
   --complete-dir experiment_reproduced/experiment4/results/Figure12/complete \
   --noflexible-dir experiment_reproduced/experiment4/results/Figure12/noflexible \
+  --nogrowth-dir paper_data/original_data/Figure12/tusk_performance \
   --output-dir results/regenerate_graphs
 ```
 
@@ -431,13 +440,15 @@ PDFs under `results/regenerate_graphs/` matching the paper Figure 9 workload/net
 ### 5.3 E2: Parameter Trade-offs — Figure 10
 
 Controller-driven reproduction lives under `experiment_reproduced/experiment2/`.
-It uses the `experiment2` branch (flat manta protocol at repo root). This laptop
+It uses per-suite protocol branches from `matrix.yaml`: Figure 10(a)/(b) on
+`experiment2`, Figure 10(c) on `experiment2_attack` (flat trees at each branch
+root). This laptop
 only SSHs to the **controller**; the controller drives all replica nodes, applies
-the geo WAN profile once, and sweeps parameter cells from `matrix.yaml`.
+WAN (geo for 10a/10b, nodelay for 10c), and sweeps parameter cells from `matrix.yaml`.
 
 #### Configuration
 
-- Branch: `experiment2`
+- Branches: `experiment2` (10a/10b), `experiment2_attack` (10c only)
 - Network: `geo` (paper 6+3+1; see `experiment_reproduced/experiment2/wan/`)
 - Figure 10(a)/(b): `σ∈{1,2}`, `κ∈{2,3,4}`, `ref∈{4,7,10}`, coverage fixed at 7, 3 runs, $100000$ tx/s (18 cells)
 - Figure 10(c): certificate-limiting attack from $t=60$s; four `(κ, ref, coverage)` configs (4 cells)
@@ -459,16 +470,19 @@ Plot inputs only are synced to:
 ```text
 experiment_reproduced/experiment2/results/Figure10a_10b/consensus_summary.csv
 experiment_reproduced/experiment2/results/Figure10c/{k2-ref4,k2-ref7,k3-ref7,k3-ref10}/latency.csv
+experiment_reproduced/experiment2/results/Figure10c/{k2-ref4,k2-ref7,k3-ref7,k3-ref10}/send_samples.csv
 ```
 
 `run_figure10.py` then **directly calls** the Figure 10 plot scripts (same as §4.2) and
 writes PDFs/PNGs under `results/regenerate_graphs/`. Use `--skip-plot` to skip.
+Figure 10(c) defaults to send-time × cumulative-mean
+(`attack_latency_timeseries_overlay_mean_send_time.{pdf,png}`).
 
 #### Expected Result
 
 PDFs under `results/regenerate_graphs/` matching paper Figure 10(a)–(c)
 (`latency_by_kappa_sigma_reference`, `reference_impact_kappa2_by_sigma`,
-`attack_latency_timeseries_overlay_mean`).
+`attack_latency_timeseries_overlay_mean_send_time`).
 
 ### 5.4 E3: Performance Comparison — Figure 11
 

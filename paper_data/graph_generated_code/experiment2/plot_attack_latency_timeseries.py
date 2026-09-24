@@ -9,60 +9,41 @@ from re import search
 
 import numpy as np
 import matplotlib
-from matplotlib.ticker import MaxNLocator
 from benchmark.logs import parse_primary_log_markers
 
 if not hasattr(np, "Inf"):
     np.Inf = np.inf
 
 matplotlib.use("Agg")
-matplotlib.rcParams["pdf.fonttype"] = 42
-matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.pyplot as plt
 
-from paper_figure_save import savefig_tight_target_aspect
 from plot_latency_common import resolve_primary_start_ts
 from plot_latency_y_axis import apply_linear_latency_axis, apply_log_scale_latency_below_cut
 
 
-DEFAULT_ORDER = ["k2-c4", "k2-c7", "k3-c7", "k4-c7"]
+# Figure 10c paper default order (κ–coverage). Do not use k4-c7 here.
+DEFAULT_ORDER = ["k2-c4", "k2-c7", "k3-c7", "k3-c10"]
 TIME_AXIS_PROPOSAL = "proposal"
 TIME_AXIS_COMMIT = "commit"
-FIXED_ATTACK_START_S = 60.0
-FIXED_ATTACK_END_S = 120.0
-ATTACK_LABEL_TEXT = "Attack Window"
-ATTACK_SHADE_COLOR = "#b91c1c"
-ATTACK_SHADE_ALPHA = 0.025
-ATTACK_SHADE_COLOR_EPS = "#f7d9d9"
+TIME_AXIS_SEND = "send"
 
-# Typography aligned with the paper_used figure set.
-PLOT_LABEL_FONT_SIZE = 37.368
-PLOT_TICK_FONT_SIZE = 37.368
-PLOT_LEGEND_FONT_SIZE = 29.894
+# Figure typography (axes, ticks, title) and legend; cumulative-mean default y-axis top.
+PLOT_FONT_SIZE = 24
+PLOT_LEGEND_FONT_SIZE = 16
 # Wide time-series aspect (inches); increase width to stretch the plot horizontally.
-FIG_WIDTH_IN = 30.0
+FIG_WIDTH_IN = 20.0
 # Default figure height (inches); larger = taller plot area for the y-axis.
-FIG_HEIGHT_DEFAULT_COMPOSITION = 7.861
-FIG_HEIGHT_DEFAULT_FIXED_Y = 7.861
-AX_LEFT_IN = 0.92
-AX_BOTTOM_IN = 0.789
-AX_TOP_IN = 0.23
-AX_RIGHT_IN = 0.23
-DEFAULT_Y_MAX_MEAN_S = 1.0
+FIG_HEIGHT_DEFAULT_COMPOSITION = 4.75
+FIG_HEIGHT_DEFAULT_FIXED_Y = 5
+# Only used when someone forces a fixed y for mean without --y-range-auto.
+# Paper 10c send×mean defaults to data-driven y (see main()), not this cap.
+DEFAULT_Y_MAX_MEAN_S = 5.5
+# Paper Figure 10c attack window on the primary-start axis.
+DEFAULT_ATTACK_START_S = 60.0
+DEFAULT_ATTACK_END_S = 120.0
 
 
-def run_directory(run_path: Path) -> Path:
-    """Return the run directory for either a run directory or latency CSV."""
-    return run_path.parent if run_path.suffix.lower() == ".csv" else run_path
-
-
-def latency_csv_path(run_path: Path) -> Path:
-    """Resolve a direct CSV input or ``<run directory>/latency.csv``."""
-    return run_path if run_path.suffix.lower() == ".csv" else run_path / "latency.csv"
-
-
-def load_run_metadata(run_path: Path) -> dict:
-    run_dir = run_directory(run_path)
+def load_run_metadata(run_dir: Path) -> dict:
     metadata_file = run_dir / "run_metadata.json"
     if not metadata_file.exists():
         return {}
@@ -83,15 +64,14 @@ def resolve_config_label(run_dir: Path, node_params: dict) -> str:
     c = node_params.get("coverage")
     if k is not None and c is not None:
         return f"k{int(k)}-c{int(c)}"
-    m = search(r"(?:^|-)k(\d+)-ref(\d+)(?:-|$)", run_dir.name)
+    m = search(r"-k(\d+)-ref(\d+)-", run_dir.name)
     if m:
         return f"k{int(m.group(1))}-c{int(m.group(2))}"
     return config_label(node_params)
 
 
-def load_primary0_log_markers(run_path: Path) -> dict:
-    run_dir = run_directory(run_path)
-    metadata = load_run_metadata(run_path)
+def load_primary0_log_markers(run_dir: Path) -> dict:
+    metadata = load_run_metadata(run_dir)
     artifacts = metadata.get("artifacts", {})
     candidates = []
     primary0_from_metadata = artifacts.get("primary0_log")
@@ -182,42 +162,93 @@ def get_attack_window(
     }
 
 
+def _rows_from_send_samples(
+    run_dir: Path, primary_start: float | None
+) -> list[dict[str, float]] | None:
+    """Rows from controller-extracted send_samples.csv. None if the file is absent.
+
+    ``send_ts`` is absolute POSIX time; align to *primary_start* (fallback: earliest
+    send) so the x-axis is ``Client send time since primary start``.
+    """
+    path = run_dir / "send_samples.csv"
+    if not path.is_file():
+        return None
+    rows: list[dict[str, float]] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            send_ts = row.get("send_ts")
+            latency_s = row.get("latency_s")
+            if not send_ts or not latency_s:
+                continue
+            rows.append(
+                {
+                    "aligned_time_s": float(send_ts),
+                    "latency_s": float(latency_s),
+                }
+            )
+    if not rows:
+        return []
+    origin = float(primary_start) if primary_start is not None else min(
+        row["aligned_time_s"] for row in rows
+    )
+    for row in rows:
+        row["aligned_time_s"] -= origin
+    return rows
+
+
 def load_consensus_latency_rows(
-    run_path: Path,
+    run_dir: Path,
     time_axis: str,
+    include_uncommitted: bool = True,
 ) -> tuple[list[dict[str, float]], float | None]:
-    latency_file = latency_csv_path(run_path)
+    latency_file = run_dir / "latency.csv"
     if not latency_file.exists():
         return [], None
 
     raw_rows: list[dict[str, float]] = []
+    consensus_by_batch: dict[str, dict[str, float]] = {}
     with latency_file.open(newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             if row.get("metric") != "consensus_latency":
                 continue
+            batch_id = row.get("identifier") or ""
             proposal_ts = row.get("proposal_ts")
             commit_ts = row.get("commit_ts")
             latency_ms = row.get("latency_ms")
-            if not proposal_ts or not latency_ms:
+            if not batch_id or not proposal_ts or not latency_ms:
                 continue
             proposal_value = float(proposal_ts)
             latency_value_s = float(latency_ms) / 1000.0
             commit_value = float(commit_ts) if commit_ts else proposal_value + latency_value_s
-            raw_rows.append(
-                {
-                    "proposal_ts": proposal_value,
-                    "commit_ts": commit_value,
-                    "latency_s": latency_value_s,
-                }
-            )
+            parsed = {
+                "proposal_ts": proposal_value,
+                "commit_ts": commit_value,
+                "latency_s": latency_value_s,
+            }
+            raw_rows.append(parsed)
+            consensus_by_batch[batch_id] = parsed
 
-    if not raw_rows:
+    event_key = "commit_ts" if time_axis == TIME_AXIS_COMMIT else "proposal_ts"
+    fallback = min((row["proposal_ts"] for row in raw_rows), default=None)
+    if fallback is None:
         return [], None
-
-    event_key = "proposal_ts" if time_axis == TIME_AXIS_PROPOSAL else "commit_ts"
-    fallback = min(row["proposal_ts"] for row in raw_rows)
-    primary_start = resolve_primary_start_ts(run_directory(run_path), fallback)
+    primary_start = resolve_primary_start_ts(
+        run_dir,
+        fallback,
+    )
+    if time_axis == TIME_AXIS_SEND:
+        sampled = _rows_from_send_samples(run_dir, primary_start)
+        if sampled is not None:
+            return sampled, primary_start
+        return (
+            _sampled_consensus_send_rows(
+                run_dir,
+                consensus_by_batch,
+                primary_start,
+            ),
+            primary_start,
+        )
     return [
         {
             "aligned_time_s": row[event_key] - primary_start,
@@ -225,6 +256,126 @@ def load_consensus_latency_rows(
         }
         for row in raw_rows
     ], primary_start
+
+
+def _sampled_consensus_send_rows(
+    run_dir: Path,
+    consensus_by_batch: dict[str, dict[str, float]],
+    primary_start: float,
+) -> list[dict[str, float]]:
+    """Map each sampled client send to its batch's consensus latency."""
+    from benchmark.logs import _to_posix_utc
+
+    logs_dir = run_dir / "logs"
+    if not logs_dir.is_dir():
+        return []
+
+    batch_by_sample: dict[tuple[int, int, int], str] = {}
+    for path in sorted(logs_dir.glob("worker-*-*.log")):
+        name_match = search(r"worker-(\d+)-(\d+)\.log$", path.name)
+        if name_match is None:
+            continue
+        node = int(name_match.group(1))
+        worker = int(name_match.group(2))
+        with path.open(errors="replace") as f:
+            for line in f:
+                sample_match = search(r"Batch ([^ ]+) contains sample tx (\d+)", line)
+                if sample_match is None:
+                    continue
+                batch_by_sample[(node, worker, int(sample_match.group(2)))] = (
+                    sample_match.group(1)
+                )
+
+    rows: list[dict[str, float]] = []
+    seen: set[tuple[int, int, int]] = set()
+    for path in sorted(logs_dir.glob("client-*-*.log")):
+        name_match = search(r"client-(\d+)-(\d+)\.log$", path.name)
+        if name_match is None:
+            continue
+        node = int(name_match.group(1))
+        worker = int(name_match.group(2))
+        with path.open(errors="replace") as f:
+            for line in f:
+                sample_match = search(
+                    r"\[([^\s\]]+Z) .* sample transaction (\d+)",
+                    line,
+                )
+                if sample_match is None:
+                    continue
+                key = (node, worker, int(sample_match.group(2)))
+                if key in seen:
+                    continue
+                batch_id = batch_by_sample.get(key)
+                consensus = consensus_by_batch.get(batch_id or "")
+                if consensus is None:
+                    continue
+                seen.add(key)
+                send_ts = _to_posix_utc(sample_match.group(1))
+                rows.append(
+                    {
+                        "aligned_time_s": send_ts - primary_start,
+                        "latency_s": consensus["latency_s"],
+                    }
+                )
+
+    return rows
+
+
+UNCOMMITTED_END_S = 120.0
+
+
+def _uncommitted_send_rows(
+    run_dir: Path,
+    committed_send_ids: set[tuple[int, int]],
+    primary_start: float,
+) -> list[dict[str, float]]:
+    """Uncommitted client sends after the attack starts. Their end time is 120s after primary start."""
+    from re import findall
+
+    from benchmark.logs import _to_posix_utc
+
+    metadata = load_run_metadata(run_dir)
+    attack_start_s = get_attack_window(
+        run_dir,
+        metadata,
+        primary_start,
+        None,
+        None,
+        None,
+        None,
+    ).get("start")
+    if attack_start_s is None:
+        return []
+
+    logs_dir = run_dir / "logs"
+    if not logs_dir.is_dir():
+        return []
+    rows: list[dict[str, float]] = []
+    seen: set[tuple[int, int]] = set()
+    for path in sorted(logs_dir.glob("client-*-*.log")):
+        name_match = search(r"client-(\d+)-", path.name)
+        if name_match is None:
+            continue
+        client = int(name_match.group(1))
+        text = path.read_text(errors="replace")
+        for timestamp, tx_s in findall(r"\[([^\s\]]+Z) .* sample transaction (\d+)", text):
+            tx_id = int(tx_s)
+            key = (client, tx_id)
+            if key in committed_send_ids or key in seen:
+                continue
+            seen.add(key)
+            send_ts = _to_posix_utc(timestamp)
+            aligned_s = send_ts - primary_start
+            if aligned_s < float(attack_start_s) or aligned_s >= UNCOMMITTED_END_S:
+                continue
+            rows.append(
+                {
+                    "proposal_ts": send_ts,
+                    "commit_ts": primary_start + UNCOMMITTED_END_S,
+                    "latency_s": UNCOMMITTED_END_S - aligned_s,
+                }
+            )
+    return rows
 
 
 def rolling_quantile_series(
@@ -277,30 +428,29 @@ def rolling_cumulative_mean_series(
     min_samples: int,
 ) -> list[dict[str, float]]:
     """
-    Event-time cumulative mean: whenever a latency sample appears, update the
-    cumulative average and emit one point at that sample's execute/aligned time.
-
-    This preserves the native timing of observations instead of resampling onto
-    a fixed time grid.
+    Expanding-window mean: at each time grid point ``center``, the mean of all samples
+    with ``aligned_time_s <= center`` (cumulative average over time).
     """
     if not rows:
         return []
 
-    _ = step_size_s  # kept for backward-compatible signature
     ordered = sorted(rows, key=lambda row: row["aligned_time_s"])
     xs = np.array([row["aligned_time_s"] for row in ordered], dtype=float)
     ys = np.array([row["latency_s"] for row in ordered], dtype=float)
     prefix = np.cumsum(ys)
+    start = float(np.floor(xs.min()))
+    end = float(np.ceil(xs.max()))
+    centers = np.arange(start, end + step_size_s * 0.5, step_size_s)
 
     series: list[dict[str, float]] = []
-    for idx, x_value in enumerate(xs):
-        r = idx + 1
+    for center in centers:
+        r = int(np.searchsorted(xs, float(center), side="right"))
         if r < min_samples:
             continue
         m = float(prefix[r - 1] / r)
         series.append(
             {
-                "x": float(x_value),
+                "x": float(center),
                 "p50": m,
                 "p95": m,
                 "mean": m,
@@ -518,20 +668,30 @@ def aggregate_runs_disjoint(
     used_labels: set[str] = set()
     unaligned_attack_markers = 0
 
+    run_info: list[tuple[Path, dict, str]] = []
+    label_counts: dict[str, int] = defaultdict(int)
     for run_dir in run_dirs:
         metadata = load_run_metadata(run_dir)
         node_params = metadata.get("node_params", {})
         base = resolve_config_label(run_dir, node_params)
-        label = base
-        if label in used_labels:
-            short = run_dir.name
-            if len(short) > 40:
-                short = short[:37] + "..."
-            label = f"{base} ({short})"
-            suffix = 2
-            while label in used_labels:
-                label = f"{base} ({short}) #{suffix}"
-                suffix += 1
+        run_info.append((run_dir, metadata, base))
+        label_counts[base] += 1
+
+    for run_dir, metadata, base in run_info:
+        if label_counts[base] > 1:
+            timestamp_match = search(r"^\d{8}_(\d{2})(\d{2})(\d{2})", run_dir.name)
+            if timestamp_match:
+                sample_id = ":".join(timestamp_match.groups())
+            else:
+                sample_id = run_dir.name[:19]
+            label = f"{base} ({sample_id})"
+        else:
+            label = base
+        suffix = 2
+        original_label = label
+        while label in used_labels:
+            label = f"{original_label} #{suffix}"
+            suffix += 1
         used_labels.add(label)
 
         rows, primary_start_ts = load_consensus_latency_rows(run_dir, time_axis)
@@ -582,16 +742,16 @@ def ordered_labels(
     data: dict[str, list[dict[str, float]]],
     preferred: list[str],
 ) -> list[str]:
-    existing = [label for label in preferred if label in data]
-    remaining = sorted(label for label in data if label not in preferred)
+    existing: list[str] = []
+    for preferred_label in preferred:
+        matches = sorted(
+            label
+            for label in data
+            if label == preferred_label or label.startswith(f"{preferred_label} (")
+        )
+        existing.extend(label for label in matches if label not in existing)
+    remaining = sorted(label for label in data if label not in existing)
     return existing + remaining
-
-
-def display_label(label: str) -> str:
-    match = search(r"^k(\d+)-c(\d+)$", label)
-    if not match:
-        return label
-    return rf"$\kappa={int(match.group(1))},\ \mathrm{{cov}}={int(match.group(2))}$"
 
 
 def default_png_path(base: Path, rolling_stat: str) -> Path:
@@ -666,7 +826,7 @@ def draw(
     y_log_cut_s: float,
     y_log_below_cut_scale: float,
     y_lim: tuple[float, float] | None,
-    x_lim: tuple[float, float] | None,
+    x_lim: tuple[float, float],
     *,
     y_composition: bool,
     composition_low_pct: float,
@@ -676,64 +836,47 @@ def draw(
     y_floor: float | None,
     y_ceiling: float | None,
     fig_height: float,
-    rolling_stat: str = "p95",
-    legend_loc: str = "upper left",
-    legend_font_size: float = PLOT_LEGEND_FONT_SIZE,
-    legend_ncol: int | None = 1,
+    attack_end_axis_s: float | None = None,
+    rolling_stat: str = "mean",
 ) -> None:
     # Wide, short aspect (paper-style overlay); serif fonts; thin frame.
     paper_rc = {
-        "font.family": "sans-serif",
-        "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica", "sans-serif"],
-        "font.size": PLOT_LABEL_FONT_SIZE,
-        "axes.titlesize": PLOT_LABEL_FONT_SIZE,
-        "axes.labelsize": PLOT_LABEL_FONT_SIZE,
-        "xtick.labelsize": PLOT_TICK_FONT_SIZE,
-        "ytick.labelsize": PLOT_TICK_FONT_SIZE,
-        "axes.linewidth": 1.183,
+        "font.family": "serif",
+        "font.serif": ["DejaVu Serif", "Times New Roman", "Nimbus Roman", "serif"],
+        "font.size": PLOT_FONT_SIZE,
+        "axes.titlesize": PLOT_FONT_SIZE,
+        "axes.labelsize": PLOT_FONT_SIZE,
+        "xtick.labelsize": PLOT_FONT_SIZE,
+        "ytick.labelsize": PLOT_FONT_SIZE,
+        "axes.linewidth": 0.9,
         "xtick.direction": "in",
         "ytick.direction": "in",
-        "xtick.major.width": 1.052,
-        "ytick.major.width": 1.052,
-        "xtick.minor.width": 0.789,
-        "ytick.minor.width": 0.789,
         "legend.frameon": True,
         "legend.fancybox": False,
+        "legend.edgecolor": "0.3",
         "legend.fontsize": PLOT_LEGEND_FONT_SIZE,
     }
     markers = ("D", "o", "v", "s", "^", "<", ">", "p", "P", "h")
 
     with plt.rc_context(paper_rc):
-        ax_height_in = fig_height - AX_BOTTOM_IN - AX_TOP_IN
-        attack_axes_aspect_wh = 2.24
-        ax_width_in = attack_axes_aspect_wh * ax_height_in
-        fig_width_in = AX_LEFT_IN + ax_width_in + AX_RIGHT_IN
-        fig = plt.figure(figsize=(fig_width_in, fig_height), dpi=180)
-        ax = fig.add_axes(
-            [
-                AX_LEFT_IN / fig_width_in,
-                AX_BOTTOM_IN / fig_height,
-                ax_width_in / fig_width_in,
-                ax_height_in / fig_height,
-            ]
-        )
+        fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, fig_height), dpi=180)
 
-        # Use the requested workload palette first, then closely related shades.
         colors = {
-            "k2-c4": "#1399B2",
-            "k2-c7": "#8B5FBF",
-            "k3-c7": "#C24E6A",
-            "k3-c10": "#8F3131",
-            "k4-c7": "#6F4E7C",
+            "k2-c4": "#c2410c",
+            "k2-c7": "#d97706",
+            "k3-c7": "#0284c7",
+            "k3-c10": "#7c3aed",
+            "k4-c7": "#16a34a",
         }
-        fallback_cycle = ["#1399B2", "#8B5FBF", "#C24E6A", "#8F3131", "#6F4E7C"]
+        fallback_cycle = ["#0d9488", "#db2777", "#4f46e5", "#ca8a04", "#15803d"]
 
         ordered = ordered_labels(aggregated, label_order)
         for idx, label in enumerate(ordered):
             series = aggregated[label]
             if not series:
                 continue
-            color = colors.get(label)
+            base_label = label.split(" (", 1)[0]
+            color = colors.get(base_label)
             if color is None:
                 color = fallback_cycle[idx % len(fallback_cycle)]
             xs = [point["x"] for point in series]
@@ -744,84 +887,92 @@ def draw(
             ax.plot(
                 xs,
                 ys,
-                linewidth=2.761,
-                label=display_label(label),
+                linewidth=2.6,
+                label=label,
                 color=color,
                 marker=mk,
-                markersize=5.259,
-                markeredgewidth=0.789,
+                markersize=10.0,
+                markeredgewidth=0.9,
                 markeredgecolor=color,
                 markevery=markevery,
                 clip_on=True,
             )
 
-        shade_kwargs = {"zorder": 0}
-        if output_path.suffix.lower() == ".eps":
-            # EPS has no alpha support; use a pale fill that visually matches the PDF shading.
-            shade_kwargs["color"] = ATTACK_SHADE_COLOR_EPS
-        else:
-            shade_kwargs["color"] = ATTACK_SHADE_COLOR
-            shade_kwargs["alpha"] = ATTACK_SHADE_ALPHA
-        ax.axvspan(
-            FIXED_ATTACK_START_S,
-            FIXED_ATTACK_END_S,
-            **shade_kwargs,
-        )
-        ax.axvline(
-            FIXED_ATTACK_START_S,
-            color="#dc2626",
-            linestyle=(0, (1.5, 6.0)),
-            linewidth=2.761,
-            zorder=5,
-        )
-        ax.text(
-            (FIXED_ATTACK_START_S + FIXED_ATTACK_END_S) / 2.0,
-            0.985,
-            ATTACK_LABEL_TEXT,
-            transform=ax.get_xaxis_transform(),
-            ha="center",
-            va="top",
-            color="#dc2626",
-            fontsize=max(22.0, PLOT_TICK_FONT_SIZE * 0.9),
-            zorder=6,
-        )
-        ax.annotate(
-            "",
-            xy=(FIXED_ATTACK_END_S, 0.915),
-            xytext=(FIXED_ATTACK_START_S, 0.915),
-            xycoords=ax.get_xaxis_transform(),
-            textcoords=ax.get_xaxis_transform(),
-            arrowprops={
-                "arrowstyle": "<->",
-                "color": "#dc2626",
-                "lw": 2.2,
-                "shrinkA": 0,
-                "shrinkB": 0,
-            },
-            zorder=6,
-        )
-        ax.axvline(
-            FIXED_ATTACK_END_S,
-            color="#dc2626",
-            linestyle=(0, (1.5, 6.0)),
-            linewidth=2.761,
-            zorder=5,
-        )
+        if attack_windows:
+            starts = [
+                float(item["start"])
+                for item in attack_windows.values()
+                if item.get("start") is not None
+            ]
+            durations = [
+                float(item["duration"])
+                for item in attack_windows.values()
+                if item.get("duration") is not None
+            ]
+            attack_start = float(np.median(starts)) if starts else None
+            attack_duration = float(np.median(durations)) if durations else 0.0
+            if attack_start is not None:
+                ax.axvline(
+                    float(attack_start),
+                    color="#dc2626",
+                    linestyle="--",
+                    linewidth=1.35,
+                    zorder=0,
+                    label="attack start",
+                )
+                if attack_end_axis_s is not None:
+                    attack_end = float(attack_end_axis_s)
+                elif attack_duration and attack_duration > 0:
+                    attack_end = float(attack_start) + float(attack_duration)
+                else:
+                    attack_end = None
+                if attack_end is not None and attack_end > float(attack_start):
+                    ax.axvspan(
+                        float(attack_start),
+                        attack_end,
+                        color="#fecaca",
+                        alpha=0.22,
+                        zorder=0,
+                    )
+                    ax.axvline(
+                        attack_end,
+                        color="#b91c1c",
+                        linestyle=":",
+                        linewidth=1.0,
+                        zorder=0,
+                        label="attack end",
+                    )
 
         if title and title.strip():
             ax.set_title(title)
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Latency (s)")
+        if time_axis == TIME_AXIS_SEND:
+            ax.set_xlabel("Client send time since primary start (s)")
+            ax.set_ylabel(
+                rolling_latency_ylabel(rolling_stat).replace(
+                    "latency", "consensus latency"
+                )
+            )
+        elif time_axis == TIME_AXIS_COMMIT:
+            ax.set_xlabel("Commit (receive) time since primary start (s)")
+            ax.set_ylabel(
+                rolling_latency_ylabel(rolling_stat).replace(
+                    "latency", "consensus latency"
+                )
+            )
+        else:
+            ax.set_xlabel("Proposal time since primary start (s)")
+            ax.set_ylabel(
+                rolling_latency_ylabel(rolling_stat).replace(
+                    "latency", "consensus latency"
+                )
+            )
         if y_log_scale:
             apply_log_scale_latency_below_cut(
                 ax,
                 cut_s=y_log_cut_s,
                 below_scale=y_log_below_cut_scale,
             )
-        if x_lim is not None:
-            ax.set_xlim(x_lim[0], x_lim[1])
-        else:
-            ax.margins(x=0.03)
+        ax.set_xlim(x_lim[0], x_lim[1])
         if y_composition and aggregated:
             lo, hi = composition_y_limits_from_aggregated(
                 aggregated,
@@ -846,21 +997,23 @@ def draw(
             ax.margins(y=0.08)
         if not y_log_scale:
             apply_linear_latency_axis(ax)
-            ax.yaxis.set_major_locator(MaxNLocator(nbins=6, min_n_ticks=4))
-        ax.set_box_aspect(1.0 / attack_axes_aspect_wh)
-        ax.grid(True, linestyle="--", linewidth=0.657, alpha=0.5)
+        ax.grid(True, linestyle="--", linewidth=0.55, alpha=0.45)
         ax.legend(
-            loc=legend_loc,
-            fontsize=legend_font_size,
-            ncol=(legend_ncol if legend_ncol is not None else 1),
+            loc="best",
+            fontsize=PLOT_LEGEND_FONT_SIZE,
+            ncol=min(len(ordered), 4) if ordered else 1,
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        savefig_tight_target_aspect(fig, output_path, 2.24, pad_inches=0.03, dpi=180)
-        if output_path.suffix.lower() == ".eps":
-            savefig_tight_target_aspect(
-                fig, output_path.with_suffix(".pdf"), 2.24, pad_inches=0.03, dpi=180
-            )
+        fig.savefig(output_path, bbox_inches="tight", dpi=180)
+        # Always also write the sibling PNG/PDF so AE can open either.
+        sibling = (
+            output_path.with_suffix(".png")
+            if output_path.suffix.lower() == ".pdf"
+            else output_path.with_suffix(".pdf")
+        )
+        if sibling != output_path:
+            fig.savefig(sibling, bbox_inches="tight", dpi=180)
         plt.close(fig)
 
 
@@ -891,10 +1044,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rolling-stat",
         choices=["p95", "p50", "mean"],
-        default="p95",
+        default="mean",
         help=(
-            "Statistic to plot: p95 / p50 use a sliding time window; "
-            "mean uses cumulative (expanding) mean: at each x, average over all samples with time ≤ x."
+            "Statistic to plot (default: mean = cumulative/expanding mean). "
+            "p95 / p50 use a sliding time window."
         ),
     )
     parser.add_argument(
@@ -960,18 +1113,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--y-range-auto",
         action="store_true",
+        default=None,
         help=(
-            "Ignore --y-min-s/--y-max-s and set y from data (composition or shared raw limits), "
-            "e.g. for log-scale or exploratory plots."
+            "Ignore --y-min-s/--y-max-s and set y from data (composition or shared raw limits). "
+            "Enabled by default for send×mean (Figure 10c paper style)."
         ),
+    )
+    parser.add_argument(
+        "--no-y-range-auto",
+        action="store_true",
+        help="Disable data-driven y; use fixed --y-min-s/--y-max-s (or mean default cap).",
     )
     parser.add_argument(
         "--auto-limits",
         action="store_true",
-        help=(
-            "For experiment reproduction: do not apply paper-fixed x/y limits "
-            "(implies --y-range-auto and data-driven x range)."
-        ),
+        help="AE alias: data-driven y (--y-range-auto) and x from sample range.",
     )
     parser.add_argument(
         "--title",
@@ -995,20 +1151,27 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--time-axis",
-        choices=[TIME_AXIS_PROPOSAL, TIME_AXIS_COMMIT],
-        default=TIME_AXIS_COMMIT,
-        help="Align points by proposal time or commit time. Defaults to commit time.",
+        choices=[TIME_AXIS_PROPOSAL, TIME_AXIS_COMMIT, TIME_AXIS_SEND],
+        default=TIME_AXIS_SEND,
+        help=(
+            "Align points by proposal, commit, or client send time "
+            f"(default: {TIME_AXIS_SEND} = Figure 10c paper style). "
+            "Send time maps sampled client txs to batches; y is still consensus latency."
+        ),
     )
     parser.add_argument(
         "--order",
         default=",".join(DEFAULT_ORDER),
-        help="Comma-separated configuration label order, e.g. k2-c4,k2-c7,k3-c7,k4-c7",
+        help="Comma-separated configuration label order, e.g. k2-c4,k2-c7,k3-c7,k3-c10",
     )
     parser.add_argument(
         "--attack-start-secs",
         type=float,
-        default=None,
-        help="Override attack start time in seconds when metadata is missing or incorrect.",
+        default=DEFAULT_ATTACK_START_S,
+        help=(
+            f"Attack start on the primary-start axis (seconds; default {DEFAULT_ATTACK_START_S:g} "
+            "for Figure 10c). Pass a value only to override."
+        ),
     )
     parser.add_argument(
         "--attack-duration-secs",
@@ -1019,11 +1182,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--attack-end-secs",
         type=float,
-        default=None,
+        default=DEFAULT_ATTACK_END_S,
         metavar="S",
         help=(
-            "Attack end time on the primary-start axis (seconds). When set, duration is "
-            "max(0, end - start), overriding log-derived duration and --attack-duration-secs."
+            f"Attack end on the primary-start axis (seconds; default {DEFAULT_ATTACK_END_S:g}). "
+            "Duration is max(0, end - start), overriding log-derived duration and "
+            "--attack-duration-secs."
         ),
     )
     parser.add_argument(
@@ -1069,7 +1233,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Overlay each run as one curve on a single figure (shared x/y axes). "
-            "Requires at least 2 run directories containing latency.csv or direct CSV paths. "
+            "Requires at least 2 directories with latency.csv. "
             "Default output: attack_latency_timeseries_overlay.png beside the first run."
         ),
     )
@@ -1080,7 +1244,7 @@ def parse_args() -> argparse.Namespace:
         metavar=("RUN_A", "RUN_B", "RUN_C", "RUN_D"),
         default=None,
         help=(
-            "Same as --merge-runs with exactly four run directories or CSV paths (legacy). "
+            "Same as --merge-runs with exactly four paths (legacy). "
             "Default output: attack_latency_timeseries_4overlay.png."
         ),
     )
@@ -1135,26 +1299,6 @@ def parse_args() -> argparse.Namespace:
             f"{FIG_HEIGHT_DEFAULT_FIXED_Y} with fixed y-axis)."
         ),
     )
-    parser.add_argument(
-        "--legend-loc",
-        default="upper left",
-        help=(
-            "Matplotlib legend location, e.g. best / upper left / center left. "
-            "Default: upper left."
-        ),
-    )
-    parser.add_argument(
-        "--legend-font-size",
-        type=float,
-        default=PLOT_LEGEND_FONT_SIZE,
-        help=f"Legend font size. Default: {PLOT_LEGEND_FONT_SIZE:g}.",
-    )
-    parser.add_argument(
-        "--legend-ncol",
-        type=int,
-        default=1,
-        help="Legend columns. Default: 1.",
-    )
     return parser.parse_args()
 
 
@@ -1163,7 +1307,7 @@ def _resolve_default_y_min_max(args: argparse.Namespace) -> None:
     if args.y_range_auto:
         return
     if args.y_min_s is None:
-        args.y_min_s = 0.2
+        args.y_min_s = 0.0
     if args.y_max_s is None:
         if args.rolling_stat == "mean":
             args.y_max_s = (
@@ -1227,42 +1371,81 @@ def _resolved_y_lim_and_draw_kw(
     return resolved_y_lim, draw_kw
 
 
-def main() -> None:
-    args = parse_args()
+def _apply_figure10c_paper_defaults(args: argparse.Namespace) -> None:
+    """Figure 10c defaults: send×mean → data-driven y (unless fixed y / --no-y-range-auto)."""
     if args.auto_limits:
         args.y_range_auto = True
+    paper_send_mean = (
+        args.time_axis == TIME_AXIS_SEND and args.rolling_stat == "mean"
+    )
+    if args.no_y_range_auto:
+        args.y_range_auto = False
+    elif args.y_range_auto is None:
+        # Default ON for the paper 10c style the AE ships; OFF for p95/p50 / other axes.
+        args.y_range_auto = bool(paper_send_mean)
+    if args.y_range_auto is None:
+        args.y_range_auto = False
+
+
+def main() -> None:
+    args = parse_args()
+    _apply_figure10c_paper_defaults(args)
     _resolve_default_y_min_max(args)
-    if not args.auto_limits and args.x_max_s <= args.x_min_s:
+
+    def _x_lim_from_aggregated(aggregated: dict) -> tuple[float, float]:
+        xs = [
+            float(pt["x"])
+            for series in aggregated.values()
+            for pt in series
+            if "x" in pt
+        ]
+        if not xs:
+            return (float(args.x_min_s), float(args.x_max_s))
+        return (min(0.0, min(xs)), max(xs) * 1.02)
+
+    def _x_lim(aggregated: dict | None = None) -> tuple[float, float]:
+        if args.auto_limits and aggregated is not None:
+            return _x_lim_from_aggregated(aggregated)
+        return (float(args.x_min_s), float(args.x_max_s))
+
+    if args.x_max_s <= args.x_min_s:
         raise SystemExit("--x-max-s must be greater than --x-min-s")
     if not args.y_range_auto and args.y_min_s is not None and args.y_max_s is not None:
         if args.y_min_s >= args.y_max_s:
             raise SystemExit("--y-max-s must be greater than --y-min-s")
 
-    def _x_lim() -> tuple[float, float] | None:
-        if args.auto_limits:
-            return None
-        return (args.x_min_s, args.x_max_s)
     overlay_paths = args.merge_runs if args.merge_runs else args.merge_four_runs
     if args.merge_runs and args.merge_four_runs:
         raise SystemExit("Use either --merge-runs or --merge-four-runs, not both.")
     if overlay_paths:
         run_dirs = [p.resolve() for p in overlay_paths]
         if len(run_dirs) < 2:
-            raise SystemExit("--merge-runs needs at least two run directories or CSV files.")
+            raise SystemExit("--merge-runs needs at least two run directories.")
         for rd in run_dirs:
-            latency_file = latency_csv_path(rd)
-            if not latency_file.is_file():
-                raise SystemExit(f"Missing latency CSV: {latency_file}")
-        default_overlay_name = (
-            "attack_latency_timeseries_4overlay.png"
-            if args.merge_four_runs
-            else "attack_latency_timeseries_overlay.png"
-        )
+            if not (rd / "latency.csv").exists():
+                raise SystemExit(f"Missing latency.csv: {rd}")
+        # Canonical AE / paper name for the default send×mean overlay.
+        if (
+            args.time_axis == TIME_AXIS_SEND
+            and args.rolling_stat == "mean"
+            and args.merge_four_runs
+        ):
+            default_overlay_name = "attack_latency_timeseries_overlay_mean_send_time.png"
+        elif args.merge_four_runs:
+            default_overlay_name = "attack_latency_timeseries_4overlay.png"
+        else:
+            default_overlay_name = "attack_latency_timeseries_overlay.png"
         output_path = (
             args.output.resolve()
             if args.output
             else default_png_path(run_dirs[0].parent / default_overlay_name, args.rolling_stat)
         )
+        # default_png_path may append _mean again; for the canonical send_time name keep as-is.
+        if (
+            args.output is None
+            and default_overlay_name == "attack_latency_timeseries_overlay_mean_send_time.png"
+        ):
+            output_path = run_dirs[0].parent / default_overlay_name
         aggregated, attack_windows = aggregate_runs_disjoint(
             run_dirs,
             args.time_axis,
@@ -1291,11 +1474,9 @@ def main() -> None:
             args.y_log_cut_s,
             args.y_log_below_cut_scale,
             resolved_y_lim,
-            _x_lim(),
+            _x_lim(aggregated),
+            attack_end_axis_s=args.attack_end_secs,
             rolling_stat=args.rolling_stat,
-            legend_loc=args.legend_loc,
-            legend_font_size=args.legend_font_size,
-            legend_ncol=args.legend_ncol,
             **draw_kw,
         )
         print(output_path)
@@ -1344,11 +1525,9 @@ def main() -> None:
         args.y_log_cut_s,
         args.y_log_below_cut_scale,
         resolved_y_lim,
-        _x_lim(),
+        (args.x_min_s, args.x_max_s),
+        attack_end_axis_s=args.attack_end_secs,
         rolling_stat=args.rolling_stat,
-        legend_loc=args.legend_loc,
-        legend_font_size=args.legend_font_size,
-        legend_ncol=args.legend_ncol,
         **draw_kw,
     )
     print(output_path)

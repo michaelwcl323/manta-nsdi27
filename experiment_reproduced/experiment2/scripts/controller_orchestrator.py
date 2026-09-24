@@ -3,7 +3,9 @@
 
 Runs on the CloudLab controller. Replicas are driven only via SSH/Fabric from here.
 
-Uses the flat manta protocol on branch ``experiment2`` (repo root = protocol tree).
+Protocol trees are flat at the branch root. Suites may pin different branches:
+``figure10a_10b`` → ``experiment2``, ``figure10c`` → ``experiment2_attack``
+(see ``matrix.yaml``). Each branch is prepared into its own ``$HOME/<repo>`` tree.
 
 Prepare runs in parallel across all replicas and must finish before any WAN/delay
 setup or benchmark cells.
@@ -23,11 +25,16 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 CONSENSUS_TPS_RE = re.compile(r"Consensus TPS:\s*([\d,]+)")
 CONSENSUS_LAT_RE = re.compile(r"Consensus latency:\s*([\d,]+)\s*ms")
+_RE_WORKER_LOG = re.compile(r"worker-(\d+)-(\d+)\.log$")
+_RE_CLIENT_LOG = re.compile(r"client-(\d+)-(\d+)\.log$")
+_RE_BATCH_SAMPLE = re.compile(r"Batch ([^ ]+) contains sample tx (\d+)")
+_RE_CLIENT_SAMPLE = re.compile(r"\[([^\s\]]+Z) .* sample transaction (\d+)")
 
 
 def progress(tag: str, done: int, total: int, msg: str) -> None:
@@ -402,9 +409,25 @@ def prepare_replicas(
     print("[exp2] all replicas prepared; applying delay profile and running experiments", flush=True)
 
 
-def switch_wan(bench_dir: Path, settings_path: Path, py: str, *, network_tag: str) -> None:
-    print(f"[exp2] apply delay profile network={network_tag}", flush=True)
-    code = f"""
+def switch_wan(
+    bench_dir: Path,
+    settings_path: Path,
+    py: str,
+    *,
+    network_tag: str,
+    clear_only: bool = False,
+) -> None:
+    if clear_only:
+        print(f"[exp2] clear delay profile only (no netem) network={network_tag}", flush=True)
+        code = f"""
+from benchmark.cloudlab_wan import CloudLabWan
+w = CloudLabWan(settings_file={str(settings_path)!r})
+w.clear()
+print('WAN cleared (no delay):', {network_tag!r}, {str(settings_path)!r})
+"""
+    else:
+        print(f"[exp2] apply delay profile network={network_tag}", flush=True)
+        code = f"""
 from benchmark.cloudlab_wan import CloudLabWan
 w = CloudLabWan(settings_file={str(settings_path)!r})
 w.clear()
@@ -481,6 +504,8 @@ def expand_cells(suite_name: str, suite: dict, defaults: dict) -> list[dict]:
             kappa = int(cfg["kappa"])
             reference = int(cfg["reference"])
             coverage = int(cfg["coverage"])
+            # Per-cell load_tag matches fab-style dirs: k2c4, k2c7, k3c7, k3c10.
+            load_tag = f"k{kappa}c{coverage}"
             node_params = dict(node_base)
             node_params.update(common_tags)
             node_params.update(
@@ -489,6 +514,7 @@ def expand_cells(suite_name: str, suite: dict, defaults: dict) -> list[dict]:
                     "kappa": kappa,
                     "reference": reference,
                     "coverage": coverage,
+                    "load_tag": load_tag,
                 }
             )
             cells.append(
@@ -504,6 +530,7 @@ def expand_cells(suite_name: str, suite: dict, defaults: dict) -> list[dict]:
                     "workers": workers,
                     "tx_size": tx_size,
                     "node_params": node_params,
+                    "load_tag": load_tag,
                     "label": f"k{kappa}-ref{reference}",
                 }
             )
@@ -565,7 +592,7 @@ ctx = SimpleNamespace(connect_kwargs=ConnectKwargs())
 bench_params = json.loads({json.dumps(bench_params)!r})
 node_params = json.loads({json.dumps(node_params)!r})
 try:
-    CloudLabBench(ctx).run(bench_params, node_params, False)
+    CloudLabBench(ctx).run(bench_params, node_params, True)
 except BenchError as exc:
     Print.error(exc)
     sys.exit(1)
@@ -788,23 +815,94 @@ def collect_figure10a_10b(bench_dir: Path, suite: dict, out_dir: Path) -> int:
     return len(rows)
 
 
+def _posix_utc(stamp: str) -> float:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+
+
+def extract_send_samples(run_dir: Path, dest: Path) -> int:
+    """Join client send times to consensus latency. Logs stay on the controller.
+
+    ``latency.csv`` has proposal/commit times only. The send-time plot needs the
+    sampled client timestamp and the batch it landed in, which live in
+    ``logs/client-*.log`` and ``logs/worker-*.log``. This writes that join as
+    ``send_samples.csv`` so the laptop never downloads the logs.
+    """
+    logs = run_dir / "logs"
+    batch_by_sample: dict[tuple[int, int, int], str] = {}
+    if logs.is_dir():
+        for path in sorted(logs.glob("worker-*-*.log")):
+            name = _RE_WORKER_LOG.search(path.name)
+            if name is None:
+                continue
+            node, worker = int(name.group(1)), int(name.group(2))
+            with path.open(errors="replace") as handle:
+                for line in handle:
+                    match = _RE_BATCH_SAMPLE.search(line)
+                    if match is not None:
+                        batch_by_sample[(node, worker, int(match.group(2)))] = match.group(1)
+
+    latency_by_batch: dict[str, float] = {}
+    latency_file = run_dir / "latency.csv"
+    if latency_file.is_file():
+        with latency_file.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("metric") != "consensus_latency":
+                    continue
+                batch_id = row.get("identifier") or ""
+                latency_ms = row.get("latency_ms")
+                if batch_id and latency_ms:
+                    latency_by_batch[batch_id] = float(latency_ms) / 1000.0
+
+    samples: list[tuple[float, str, float]] = []
+    seen: set[tuple[int, int, int]] = set()
+    if logs.is_dir():
+        for path in sorted(logs.glob("client-*-*.log")):
+            name = _RE_CLIENT_LOG.search(path.name)
+            if name is None:
+                continue
+            node, worker = int(name.group(1)), int(name.group(2))
+            with path.open(errors="replace") as handle:
+                for line in handle:
+                    match = _RE_CLIENT_SAMPLE.search(line)
+                    if match is None:
+                        continue
+                    key = (node, worker, int(match.group(2)))
+                    if key in seen:
+                        continue
+                    batch_id = batch_by_sample.get(key)
+                    latency_s = latency_by_batch.get(batch_id or "")
+                    if batch_id is None or latency_s is None:
+                        continue
+                    seen.add(key)
+                    samples.append((_posix_utc(match.group(1)), batch_id, latency_s))
+    samples.sort()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with dest.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["send_ts", "batch_id", "latency_s"])
+        writer.writerows(samples)
+    return len(samples)
+
+
 def collect_figure10c(bench_dir: Path, suite: dict, out_dir: Path, cells: list[dict]) -> int:
-    """Copy only latency.csv into results/Figure10c/{label}/ (plot input for 10c)."""
+    """Copy latency.csv and send_samples.csv into results/Figure10c/{label}/."""
     design = suite["design_tag"]
     network = suite["network_tag"]
-    load = suite["load_tag"]
-    root = bench_dir / "manta_result" / design / network / load
     out_dir.mkdir(parents=True, exist_ok=True)
     count = 0
-    if not root.exists():
-        print(f"[exp2] no result root yet: {root}", flush=True)
-        return 0
 
     for cell in cells:
         kappa = cell["kappa"]
         reference = cell["reference"]
         label = cell["label"]  # k2-ref4
+        load = cell.get("load_tag") or (cell.get("node_params") or {}).get(
+            "load_tag", suite["load_tag"]
+        )
+        root = bench_dir / "manta_result" / design / network / load
         dest = out_dir / label
+        if not root.exists():
+            print(f"[exp2] Figure10c: no result root for {label}: {root}", flush=True)
+            continue
         # Prefer newest matching run dir that has latency.csv.
         candidates = []
         for latency in root.rglob("latency.csv"):
@@ -822,7 +920,7 @@ def collect_figure10c(bench_dir: Path, suite: dict, out_dir: Path, cells: list[d
                 continue
             candidates.append(run_dir)
         if not candidates:
-            print(f"[exp2] Figure10c: no run dir for {label}", flush=True)
+            print(f"[exp2] Figure10c: no run dir for {label} under {root}", flush=True)
             continue
         candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         src = candidates[0]
@@ -831,9 +929,93 @@ def collect_figure10c(bench_dir: Path, suite: dict, out_dir: Path, cells: list[d
             shutil.rmtree(dest)
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_latency, dest / "latency.csv")
+        n_send = extract_send_samples(src, dest / "send_samples.csv")
         count += 1
-        print(f"[exp2] Figure10c collected {src.name}/latency.csv -> {dest}", flush=True)
+        print(
+            f"[exp2] Figure10c collected {src.name}/latency.csv "
+            f"and send_samples.csv ({n_send} rows) -> {dest}",
+            flush=True,
+        )
     return count
+
+
+def suite_branch(suite: dict, matrix: dict) -> str:
+    """Per-suite branch, falling back to matrix-level default (experiment2)."""
+    return str(suite.get("branch") or matrix.get("branch") or "experiment2")
+
+
+def monorepo_for_branch(
+    base_monorepo: Path,
+    monorepo_name: str,
+    branch: str,
+    default_branch: str,
+) -> tuple[Path, str]:
+    """Map a protocol branch to (controller_path, replica repo.name).
+
+    Default branch keeps ``$HOME/<monorepo_name>``. Other branches use
+    ``$HOME/<monorepo_name>-<branch>`` so both trees can coexist after prepare.
+    """
+    base = base_monorepo.expanduser()
+    if branch == default_branch:
+        return base, monorepo_name
+    name = f"{monorepo_name}-{branch}"
+    return base.parent / name, name
+
+
+def ensure_bench_venv(bench_dir: Path) -> str:
+    """Ensure benchmark/.venv exists; return path to its python."""
+    venv_py = bench_dir / ".venv" / "bin" / "python"
+    if not venv_py.exists():
+        run(["python3", "-m", "venv", str(bench_dir / ".venv")])
+        run([str(venv_py), "-m", "pip", "install", "--upgrade", "pip"])
+        run([str(venv_py), "-m", "pip", "install", "-r", "requirements.txt"], cwd=bench_dir)
+        run([str(venv_py), "-m", "pip", "install", "pyyaml"], cwd=bench_dir)
+    return str(venv_py)
+
+
+def write_wan_settings_for_repo(
+    *,
+    clear_only: bool,
+    hosts_all: list[dict],
+    matrix: dict,
+    workdir: Path,
+    remote_key: str,
+    port: int,
+    repo_name: str,
+    branch: str,
+    repo_url: str,
+    password: str | None,
+    logs_dir: Path,
+) -> Path:
+    """Write settings JSON with the suite's repo.name/branch and return its path."""
+    network = matrix["network"]
+    hosts_only = replica_hosts(hosts_all)
+    if clear_only:
+        merged = {
+            "key": {"path": remote_key},
+            "port": port,
+            "repo": {"name": repo_name, "url": repo_url, "branch": branch},
+            "hosts": hosts_only,
+        }
+    else:
+        wan_path = workdir / network["wan_profile"]
+        wan_profile = json.loads(wan_path.read_text(encoding="utf-8"))
+        merged = merge_wan_settings(
+            hosts_all,
+            wan_profile,
+            remote_key,
+            port,
+            repo_name,
+            branch,
+            repo_url,
+        )
+    if password:
+        merged["ssh_key_password"] = password
+    wan_settings = logs_dir / (
+        f"settings_{'nodelay' if clear_only else 'geo'}_{repo_name}.json"
+    )
+    wan_settings.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    return wan_settings
 
 
 def parse_args() -> argparse.Namespace:
@@ -849,6 +1031,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
     )
     p.add_argument("--skip-prepare", action="store_true")
+    p.add_argument(
+        "--skip-wan",
+        action="store_true",
+        help="Clear tc-netem only; do not apply geo delay (LAN / no-delay)",
+    )
     return p.parse_args()
 
 
@@ -863,76 +1050,116 @@ def main() -> int:
     hosts = replica_hosts(hosts_all)
     username = hosts[0].get("username", "ubuntu")
     repo_url = settings["repo"]["url"]
-    branch = matrix.get("branch", "experiment2")
+    default_branch = str(matrix.get("branch") or "experiment2")
     monorepo_name = matrix.get("monorepo_name", "manta-nsdi27")
     port = int(settings.get("port", 5000))
     password = settings.get("ssh_key_password") or (settings.get("key") or {}).get("password")
     defaults = matrix.get("defaults") or {}
 
+    suites = matrix["suites"]
+    if args.only_suite:
+        suites = {args.only_suite: suites[args.only_suite]}
+
+    # Unique branches needed for the selected suites (10a/10b→experiment2, 10c→attack).
+    branches_needed: list[str] = []
+    for suite in suites.values():
+        b = suite_branch(suite, matrix)
+        if b not in branches_needed:
+            branches_needed.append(b)
+    print(
+        f"[exp2] branches for selected suites: {branches_needed} "
+        f"(default={default_branch})",
+        flush=True,
+    )
+
     reset_remote_benchmark_processes(
         hosts=hosts, username=username, remote_key=args.remote_key, tag="exp2"
     )
-    # Phase 1: fresh controller monorepo on experiment2.
-    if not args.skip_prepare:
-        ensure_monorepo(args.monorepo, repo_url, branch)
-        prepare_controller_monorepo(args.monorepo)
 
     prepare_script = args.workdir / "scripts" / "prepare_repo.sh"
-    prepare_replicas(
-        hosts=hosts,
-        username=username,
-        remote_key=args.remote_key,
-        repo_url=repo_url,
-        branch=branch,
-        monorepo_name=monorepo_name,
-        prepare_script=prepare_script,
-        skip_prepare=args.skip_prepare,
-    )
+    # Phase 1: prepare each required branch into its own monorepo tree.
+    for branch in branches_needed:
+        repo_dir, repo_name = monorepo_for_branch(
+            args.monorepo, monorepo_name, branch, default_branch
+        )
+        if not args.skip_prepare:
+            print(f"[exp2] prepare branch={branch} repo={repo_name} dir={repo_dir}", flush=True)
+            ensure_monorepo(repo_dir, repo_url, branch)
+            prepare_controller_monorepo(repo_dir)
+        prepare_replicas(
+            hosts=hosts,
+            username=username,
+            remote_key=args.remote_key,
+            repo_url=repo_url,
+            branch=branch,
+            monorepo_name=repo_name,
+            prepare_script=prepare_script,
+            skip_prepare=args.skip_prepare,
+        )
 
     results_root = args.workdir / "results"
     results_root.mkdir(parents=True, exist_ok=True)
     logs_dir = args.workdir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    bench_dir = args.monorepo / "benchmark"
-    if not bench_dir.is_dir():
-        raise SystemExit(f"missing benchmark dir on controller: {bench_dir}")
+    # Figure 10c uses network_tag=nodelay: clear any leftover netem and never apply geo.
+    # Mixed-suite runs (10a/10b + 10c) keep geo for 10a/10b; 10c still uses its
+    # own clear_only settings when that suite starts (see per-suite WAN below).
+    nodelay_only = all(
+        name == "figure10c"
+        or str((suite or {}).get("network_tag", "")).lower()
+        in ("nodelay", "lan", "none", "zero")
+        for name, suite in suites.items()
+    )
+    # Initial WAN: if any geo suite is present, apply geo once up front; else clear.
+    has_geo_suite = any(
+        name != "figure10c"
+        and str((suite or {}).get("network_tag", "")).lower()
+        not in ("nodelay", "lan", "none", "zero")
+        for name, suite in suites.items()
+    )
+    initial_clear = bool(args.skip_wan or nodelay_only or not has_geo_suite)
 
-    venv_py = bench_dir / ".venv" / "bin" / "python"
-    if not venv_py.exists():
-        run(["python3", "-m", "venv", str(bench_dir / ".venv")])
-        run([str(venv_py), "-m", "pip", "install", "--upgrade", "pip"])
-        run([str(venv_py), "-m", "pip", "install", "-r", "requirements.txt"], cwd=bench_dir)
-        run([str(venv_py), "-m", "pip", "install", "pyyaml"], cwd=bench_dir)
-    py = str(venv_py)
-
-    # Phase 2: apply WAN once (geo).
+    # Seed WAN using the first suite's repo so cloudlab-wan can run.
+    first_suite = next(iter(suites.values()))
+    first_branch = suite_branch(first_suite, matrix)
+    first_repo_dir, first_repo_name = monorepo_for_branch(
+        args.monorepo, monorepo_name, first_branch, default_branch
+    )
+    first_bench = first_repo_dir / "benchmark"
+    if not first_bench.is_dir():
+        raise SystemExit(f"missing benchmark dir on controller: {first_bench}")
+    first_py = ensure_bench_venv(first_bench)
+    first_wan = write_wan_settings_for_repo(
+        clear_only=initial_clear,
+        hosts_all=hosts_all,
+        matrix=matrix,
+        workdir=args.workdir,
+        remote_key=args.remote_key,
+        port=port,
+        repo_name=first_repo_name,
+        branch=first_branch,
+        repo_url=repo_url,
+        password=password,
+        logs_dir=logs_dir,
+    )
+    (first_bench / "cloudlab_settings.json").write_text(
+        first_wan.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     network = matrix["network"]
-    wan_path = args.workdir / network["wan_profile"]
-    wan_profile = json.loads(wan_path.read_text(encoding="utf-8"))
-    merged = merge_wan_settings(
-        hosts_all,
-        wan_profile,
-        args.remote_key,
-        port,
-        monorepo_name,
-        branch,
-        repo_url,
+    wan_tag = "nodelay" if initial_clear else network["tag"]
+    if initial_clear:
+        print("[exp2] phase wan: clear-only (nodelay) — no geo netem ...", flush=True)
+    else:
+        print(f"[exp2] phase wan: apply {network['tag']} ...", flush=True)
+    switch_wan(
+        first_bench,
+        first_bench / "cloudlab_settings.json",
+        first_py,
+        network_tag=wan_tag,
+        clear_only=initial_clear,
     )
-    if password:
-        merged["ssh_key_password"] = password
-    wan_settings = logs_dir / "settings_geo.json"
-    wan_settings.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
-    (bench_dir / "cloudlab_settings.json").write_text(
-        wan_settings.read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    print(f"[exp2] phase wan: apply {network['tag']} ...", flush=True)
-    switch_wan(bench_dir, bench_dir / "cloudlab_settings.json", py, network_tag=network["tag"])
     print("[exp2] phase wan: complete", flush=True)
-
-    suites = matrix["suites"]
-    if args.only_suite:
-        suites = {args.only_suite: suites[args.only_suite]}
 
     suite_cells: dict[str, list[dict]] = {}
     total_cells = 0
@@ -947,6 +1174,52 @@ def main() -> int:
     cell_i = 0
 
     for suite_name, suite in suites.items():
+        branch = suite_branch(suite, matrix)
+        repo_dir, repo_name = monorepo_for_branch(
+            args.monorepo, monorepo_name, branch, default_branch
+        )
+        bench_dir = repo_dir / "benchmark"
+        if not bench_dir.is_dir():
+            raise SystemExit(f"missing benchmark dir for suite {suite_name}: {bench_dir}")
+        py = ensure_bench_venv(bench_dir)
+
+        suite_nodelay = (
+            suite_name == "figure10c"
+            or str(suite.get("network_tag", "")).lower()
+            in ("nodelay", "lan", "none", "zero")
+            or bool(args.skip_wan)
+        )
+        wan_settings = write_wan_settings_for_repo(
+            clear_only=suite_nodelay,
+            hosts_all=hosts_all,
+            matrix=matrix,
+            workdir=args.workdir,
+            remote_key=args.remote_key,
+            port=port,
+            repo_name=repo_name,
+            branch=branch,
+            repo_url=repo_url,
+            password=password,
+            logs_dir=logs_dir,
+        )
+        (bench_dir / "cloudlab_settings.json").write_text(
+            wan_settings.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        # Re-apply / clear WAN when switching between geo (10a/10b) and nodelay (10c).
+        suite_wan_tag = "nodelay" if suite_nodelay else network["tag"]
+        print(
+            f"[exp2] suite={suite_name} branch={branch} repo={repo_name} "
+            f"wan={suite_wan_tag}",
+            flush=True,
+        )
+        switch_wan(
+            bench_dir,
+            bench_dir / "cloudlab_settings.json",
+            py,
+            network_tag=suite_wan_tag,
+            clear_only=suite_nodelay,
+        )
+
         reset_remote_benchmark_processes(
             hosts=hosts, username=username, remote_key=args.remote_key, tag="exp2"
         )
@@ -957,7 +1230,7 @@ def main() -> int:
             hosts=hosts,
             username=username,
             remote_key=args.remote_key,
-            repo_names=[monorepo_name],
+            repo_names=[repo_name],
             tag="exp2",
         )
         for cell in cells:
@@ -986,7 +1259,7 @@ def main() -> int:
                 hosts=hosts,
                 username=username,
                 remote_key=args.remote_key,
-                repo_names=[monorepo_name],
+                repo_names=[repo_name],
                 tag="exp2",
             )
             run_cell(

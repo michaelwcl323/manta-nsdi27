@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Plot mean consensus latency vs reference for kappa=2, by sigma.
+"""Plot mean consensus latency vs reference for kappa=2 and coverage=7, by sigma.
 
 Reads per-run latencies from ``paper_data/original_data/Figure10a_10b/consensus_summary.csv``
-and averages runs that share the same (sigma, kappa=2, reference).
+and averages runs that share the same (sigma, kappa=2, reference, coverage=7).
 """
 
 from __future__ import annotations
@@ -27,25 +27,41 @@ REPO_ROOT = SCRIPT_DIR.parents[2]
 DEFAULT_SUMMARY = REPO_ROOT / "paper_data" / "original_data" / "Figure10a_10b" / "consensus_summary.csv"
 DEFAULT_OUTPUT = REPO_ROOT / "results" / "regenerate_graphs" / "reference_impact_kappa2_by_sigma.pdf"
 
-REFERENCES = [4, 7, 10]
+REFERENCES = [2, 4, 7]
 KAPPA = 2
+COVERAGE = 7
 SERIES_SPEC = [
     # (sigma, legend, color, linestyle)
     (1, r"$\sigma=1$", "#1b9e77", "-"),
     (2, r"$\sigma=2$", "#7570b3", "--"),
+    (3, r"$\sigma=3$", "#d95f02", "-."),
+    (4, r"$\sigma=4$", "#e7298a", ":"),
+    (5, r"$\sigma=5$", "#66a61e", (0, (5, 2))),
+    (6, r"$\sigma=6$", "#e6ab02", (0, (3, 1, 1, 1))),
 ]
 
 
-def load_mean_latency_s(summary_csv: Path) -> dict[tuple[int, int, int], float]:
-    """Return mean consensus latency in seconds keyed by (sigma, kappa, reference)."""
+def load_mean_latency_s(
+    summary_csv: Path,
+    *,
+    network: str,
+) -> dict[tuple[int, int, int, int], float]:
+    """Return mean latency keyed by (sigma, kappa, reference, coverage)."""
     if not summary_csv.exists():
         raise SystemExit(f"missing summary csv: {summary_csv}")
 
-    grouped: dict[tuple[int, int, int], list[float]] = defaultdict(list)
+    grouped: dict[tuple[int, int, int, int], list[float]] = defaultdict(list)
     with summary_csv.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            key = (int(row["sigma"]), int(row["kappa"]), int(row["reference"]))
+            if str(row.get("network") or "geo") != network:
+                continue
+            key = (
+                int(row["sigma"]),
+                int(row["kappa"]),
+                int(row["reference"]),
+                int(row.get("coverage") or 7),
+            )
             grouped[key].append(float(row["consensus_latency_ms"]) / 1000.0)
 
     if not grouped:
@@ -55,7 +71,7 @@ def load_mean_latency_s(summary_csv: Path) -> dict[tuple[int, int, int], float]:
 
 
 def build_series(
-    means: dict[tuple[int, int, int], float],
+    means: dict[tuple[int, int, int, int], float],
     *,
     allow_partial: bool = False,
 ) -> list[tuple[str, str, str, list[int], list[float]]]:
@@ -65,11 +81,12 @@ def build_series(
         xs = []
         ys = []
         for reference in REFERENCES:
-            key = (sigma, KAPPA, reference)
+            key = (sigma, KAPPA, reference, COVERAGE)
             if key not in means:
                 if not allow_partial:
                     raise SystemExit(
-                        f"missing averaged latency for sigma={sigma} kappa={KAPPA} ref={reference}"
+                        f"missing averaged latency for sigma={sigma} kappa={KAPPA} "
+                        f"ref={reference} coverage={COVERAGE}"
                     )
                 missing.append(key)
                 continue
@@ -110,7 +127,7 @@ def draw(
     plotted_references = sorted({reference for _, _, _, xs, _ in series for reference in xs})
     ax.set_xticks(plotted_references)
     if not auto_limits:
-        ax.set_xlim(3.5, 10.5)
+        ax.set_xlim(1.5, 7.5)
         ax.set_ylim(1.0, 1.3)
         ax.set_yticks([1.0, 1.1, 1.2, 1.3])
     else:
@@ -121,7 +138,7 @@ def draw(
     for spine in ax.spines.values():
         spine.set_linewidth(2.429)
     ax.grid(True, linestyle=(0, (1, 2)), linewidth=1.349, color="0.78")
-    ax.legend(fontsize=29.894, frameon=True, loc="upper left")
+    ax.legend(fontsize=22, frameon=True, loc="best", ncol=2)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     savefig_tight_target_aspect(fig, output_path, 1.5, pad_inches=0.03, dpi=180)
@@ -150,12 +167,13 @@ def parse_args() -> argparse.Namespace:
             "(for filtered experiment reproduction)."
         ),
     )
+    parser.add_argument("--network", choices=["geo", "lan"], default="geo")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    means = load_mean_latency_s(args.summary_csv.resolve())
+    means = load_mean_latency_s(args.summary_csv.resolve(), network=args.network)
     series = build_series(means, allow_partial=args.auto_limits)
     output = args.output.resolve()
     draw(series, output, auto_limits=args.auto_limits)
