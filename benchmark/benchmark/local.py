@@ -111,7 +111,7 @@ class LocalBench:
             client_rates = []
             if rate_type == 'balanced':
                 rate_share = ceil(rate / committee.workers())
-                for i, addresses in enumerate(workers_addresses, start=self.faults):
+                for i, addresses in enumerate(workers_addresses):
                     for (id, address) in addresses:
                         client_rates.append(rate_share)
                         cmd = CommandMaker.run_client(
@@ -128,7 +128,7 @@ class LocalBench:
                 rates = zipf_allocator.allocate()
                 print(rates)
                 # run the clients with the generated rate
-                for i, addresses in enumerate(workers_addresses, start=self.faults):
+                for i, addresses in enumerate(workers_addresses):
                     for (id, address) in addresses:
                         client_rates.append(rates[i])
                         cmd = CommandMaker.run_client(
@@ -141,9 +141,7 @@ class LocalBench:
                         self._background_run(cmd, log_file)
 
             # Run the primaries (except the faulty ones).
-            for i, address in enumerate(
-                committee.primary_addresses(self.faults), start=self.faults
-            ):
+            for i, address in enumerate(committee.primary_addresses(self.faults)):
                 cmd = CommandMaker.run_primary(
                     PathMaker.key_file(i),
                     PathMaker.committee_file(),
@@ -155,7 +153,7 @@ class LocalBench:
                 self._background_run(cmd, log_file)
 
             # Run the workers (except the faulty ones).
-            for i, addresses in enumerate(workers_addresses, start=self.faults):
+            for i, addresses in enumerate(workers_addresses):
                 for (id, address) in addresses:
                     cmd = CommandMaker.run_worker(
                         PathMaker.key_file(i),

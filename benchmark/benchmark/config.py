@@ -95,10 +95,8 @@ class Committee:
         ''' Returns an ordered list of primaries' addresses. '''
         assert faults < self.size()
         addresses = []
-        # Fault injection uses crash-stop nodes at the beginning of the
-        # committee order. Keep the full committee in the configuration so
-        # quorum thresholds are unchanged, but only return surviving nodes.
-        for authority in list(self.json['authorities'].values())[faults:]:
+        good_nodes = self.size() - faults
+        for authority in list(self.json['authorities'].values())[:good_nodes]:
             addresses += [authority['primary']['primary_to_primary']]
         return addresses
 
@@ -106,7 +104,8 @@ class Committee:
         ''' Returns an ordered list of list of workers' addresses. '''
         assert faults < self.size()
         addresses = []
-        for authority in list(self.json['authorities'].values())[faults:]:
+        good_nodes = self.size() - faults
+        for authority in list(self.json['authorities'].values())[:good_nodes]:
             authority_addresses = []
             for id, worker in authority['workers'].items():
                 authority_addresses += [(id, worker['transactions'])]

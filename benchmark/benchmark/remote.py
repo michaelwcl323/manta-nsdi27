@@ -198,9 +198,9 @@ class Bench:
         node_parameters.print(PathMaker.parameters_file())
 
         # Cleanup all nodes and upload configuration files.
-        names = names[bench_parameters.faults:]
+        names = names[:len(names)-bench_parameters.faults]
         progress = progress_bar(names, prefix='Uploading config files:')
-        for i, name in enumerate(progress, start=bench_parameters.faults):
+        for i, name in enumerate(progress):
             for ip in committee.ips(name):
                 c = Connection(ip, user='ubuntu', connect_kwargs=self.connect)
                 c.run(f'{CommandMaker.cleanup()} || true', hide=True)
@@ -223,7 +223,7 @@ class Bench:
         Print.info('Booting clients...')
         workers_addresses = committee.workers_addresses(faults)
         rate_share = ceil(rate / committee.workers())
-        for i, addresses in enumerate(workers_addresses, start=faults):
+        for i, addresses in enumerate(workers_addresses):
             for (id, address) in addresses:
                 host = Committee.ip(address)
                 cmd = CommandMaker.run_client(
@@ -237,7 +237,7 @@ class Bench:
 
         # Run the primaries (except the faulty ones).
         Print.info('Booting primaries...')
-        for i, address in enumerate(committee.primary_addresses(faults), start=faults):
+        for i, address in enumerate(committee.primary_addresses(faults)):
             host = Committee.ip(address)
             cmd = CommandMaker.run_primary(
                 PathMaker.key_file(i),
@@ -251,7 +251,7 @@ class Bench:
 
         # Run the workers (except the faulty ones).
         Print.info('Booting workers...')
-        for i, addresses in enumerate(workers_addresses, start=faults):
+        for i, addresses in enumerate(workers_addresses):
             for (id, address) in addresses:
                 host = Committee.ip(address)
                 cmd = CommandMaker.run_worker(
@@ -279,7 +279,7 @@ class Bench:
         # Download log files.
         workers_addresses = committee.workers_addresses(faults)
         progress = progress_bar(workers_addresses, prefix='Downloading workers logs:')
-        for i, addresses in enumerate(progress, start=faults):
+        for i, addresses in enumerate(progress):
             for id, address in addresses:
                 host = Committee.ip(address)
                 c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
@@ -294,7 +294,7 @@ class Bench:
 
         primary_addresses = committee.primary_addresses(faults)
         progress = progress_bar(primary_addresses, prefix='Downloading primaries logs:')
-        for i, address in enumerate(progress, start=faults):
+        for i, address in enumerate(progress):
             host = Committee.ip(address)
             c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
             c.get(
