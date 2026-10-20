@@ -8,6 +8,6 @@ cloudlab.jwt
 # Nested git history (do not re-add)
 0ther/manta_yu/.git/
 
-# Local raw Experiment 2 logs are not part of the paper-data submission.
+# Local Experiment 2 logs and the full attack archive are not submitted.
 paper_data/original_data/Figure10abc/**/logs/*.log
-paper_data/original_data/Figure10_attack/**/logs/*.log
+paper_data/processed_data/Figure10_attack/

@@ -72,19 +72,20 @@ All regenerated run/mean tables are written under
 `results/processed_data/Figure10abc/fig_{a,b,c}/{geo,lan}/`, never original_data.
 Use `--processed-data-root` to change this output location.
 
-Attack inputs are in `paper_data/original_data/Figure10_attack/`, copied
-from `ForArtifact/ae_error/10c/Fig10c/`. The four configurations retain
-`latency.csv`, `summary.txt`, and `run_metadata.json` in Git.
+Attack plotting inputs are four standalone `send_samples.csv` files under
+`paper_data/original_data/Figure10_attack/{configuration}/{run}/`.
+They preserve the original exported `send_ts` and `latency_s` values and include
+`primary_start_ts` from run metadata, making time alignment self-contained.
 `plot_attack_latency_fig10_style.py` calls this repository's existing
 `plot_attack_latency_timeseries.py` to align client send times and compute the
 cumulative mean. Its attack window is 60–120 seconds.
 
-Individual send samples needed for the attack plot are exported separately to
-`paper_data/processed_data/Figure10_attack/{configuration}/{run}/send_samples.csv`.
-The attack runner joins these with the original records in a temporary directory
-and reads the primary-start timestamp from metadata when logs are absent.
-This preserves the plotted values without committing raw logs or storing derived
-samples in original_data. Raw logs remain local and are ignored by Git.
+The complete original attack run directories from
+`ForArtifact/ae_error/10c/Fig10c/` are kept locally under
+`paper_data/processed_data/Figure10_attack/`, including `latency.csv`, summaries,
+metadata, and all 120 raw logs. This archive is ignored by Git. The attack
+plotting command uses only the four committed sample CSVs. Fig A/B/C logs also
+remain local and are ignored by Git.
 The runners read the archives without modifying them. Regenerated figures
 preserve the plotted values and shared canvas; originals remain available for
 comparison of typography and layout.

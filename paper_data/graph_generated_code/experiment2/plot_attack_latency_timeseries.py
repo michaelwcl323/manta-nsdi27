@@ -203,6 +203,15 @@ def load_consensus_latency_rows(
     time_axis: str,
     include_uncommitted: bool = True,
 ) -> tuple[list[dict[str, float]], float | None]:
+    # Standalone send samples include their time origin, so the archived attack
+    # figure can be drawn without latency.csv, metadata, or raw logs.
+    samples_file = run_dir / "send_samples.csv"
+    if time_axis == TIME_AXIS_SEND and samples_file.is_file():
+        with samples_file.open(newline="", encoding="utf-8") as handle:
+            first = next(csv.DictReader(handle), None)
+        if first and first.get("primary_start_ts"):
+            primary_start = float(first["primary_start_ts"])
+            return _rows_from_send_samples(run_dir, primary_start) or [], primary_start
     latency_file = run_dir / "latency.csv"
     if not latency_file.exists():
         return [], None

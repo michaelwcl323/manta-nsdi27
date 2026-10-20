@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import sys
-import tempfile
 from pathlib import Path
 
 import matplotlib
@@ -35,7 +34,6 @@ DEFAULT_OUTPUT_STEM = (
 
 MANTA_PLOT_DIR = SCRIPT_DIR
 MANTA_ATTACK_SCRIPT = MANTA_PLOT_DIR / "plot_attack_latency_timeseries.py"
-SAMPLES_ROOT = MANTA_ROOT / "paper_data" / "processed_data" / "Figure10_attack"
 
 # Match the series order, colors, markers, and solid lines in the attack template.
 SERIES = [
@@ -76,13 +74,13 @@ def load_manta_plot_module():
 
 
 def resolve_run_dirs(data_root: Path) -> list[Path]:
-    """Return one latency run for every paper configuration, in paper order."""
+    """Return one send-sample run for every paper configuration, in paper order."""
     run_dirs: list[Path] = []
     for directory_name, _, _, _, _, _ in SERIES:
-        candidates = sorted((data_root / directory_name).rglob("latency.csv"))
+        candidates = sorted((data_root / directory_name).rglob("send_samples.csv"))
         if len(candidates) != 1:
             raise SystemExit(
-                f"expected exactly one latency.csv under {data_root / directory_name}, "
+                f"expected exactly one send_samples.csv under {data_root / directory_name}, "
                 f"found {len(candidates)}"
             )
         run_dirs.append(candidates[0].parent)
@@ -93,34 +91,19 @@ def build_series(data_root: Path):
     """Use the same send-time alignment and expanding mean as the source PNG."""
     manta = load_manta_plot_module()
     run_dirs = resolve_run_dirs(data_root)
-    # Join the original run records with the exported send samples in a
-    # temporary view. The committed inputs can be plotted without log files.
-    with tempfile.TemporaryDirectory(prefix="manta-attack-inputs-") as temporary:
-        inputs = []
-        for spec, run_dir in zip(SERIES, run_dirs):
-            samples = SAMPLES_ROOT / spec[0] / run_dir.name / "send_samples.csv"
-            if not samples.is_file():
-                inputs.append(run_dir)
-                continue
-            view = Path(temporary) / spec[0] / run_dir.name
-            view.mkdir(parents=True)
-            for name in ("latency.csv", "run_metadata.json"):
-                (view / name).symlink_to(run_dir / name)
-            (view / "send_samples.csv").symlink_to(samples)
-            inputs.append(view)
-        aggregated, attack_windows = manta.aggregate_runs_disjoint(
-            inputs,
-            manta.TIME_AXIS_SEND,
-            5.0,       # Unused for the expanding mean, retained for source parity.
-            1.0,       # One cumulative-mean point per second.
-            25,
-            None,
-            "mean",
-            60.0,
-            None,
-            120.0,
-            None,
-        )
+    aggregated, attack_windows = manta.aggregate_runs_disjoint(
+        run_dirs,
+        manta.TIME_AXIS_SEND,
+        5.0,       # Unused for the expanding mean, retained for source parity.
+        1.0,       # One cumulative-mean point per second.
+        25,
+        None,
+        "mean",
+        60.0,
+        None,
+        120.0,
+        None,
+    )
     if not aggregated:
         raise SystemExit("no consensus-latency samples were recovered")
     return manta, aggregated, attack_windows

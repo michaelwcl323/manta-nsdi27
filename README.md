@@ -222,9 +222,11 @@ window at 60–120 seconds. Both commands write PDF and PNG files to
 `results/regenerate_graphs/experiment2_fig_abc/`.
 
 Original run summaries, metadata, latency records, and the available Fig B
-per-run CSVs are committed. Raw `.log` files are excluded. The attack plot uses
-individual send samples exported to `paper_data/processed_data/Figure10_attack/`
-so it can be reproduced without logs. Recomputed means and run tables are
+per-run CSVs are committed. Attack plotting inputs are the four standalone
+`send_samples.csv` files in `paper_data/original_data/Figure10_attack/`.
+The complete attack run archive, including logs, remains local under
+`paper_data/processed_data/Figure10_attack/` and is excluded from Git.
+Recomputed means and run tables are
 written under `results/processed_data/Figure10abc/`, outside `original_data`.
 
 For a subset, use `--figure a|b|c` and `--network geo|lan`. Original reference
