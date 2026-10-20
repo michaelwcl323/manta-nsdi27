@@ -1,0 +1,50 @@
+{
+  "fig_a": {
+    "geo": {
+      "latency_axes": {
+        "limits": [
+          0.9,
+          1.4
+        ],
+        "ticks": [
+          0.9,
+          1.0,
+          1.1,
+          1.2,
+          1.3,
+          1.4
+        ]
+      },
+      "excluded_run_names": []
+    },
+    "lan": {
+      "latency_axes": {
+        "limits": [
+          0.9,
+          1.4
+        ],
+        "ticks": [
+          0.9,
+          1.0,
+          1.1,
+          1.2,
+          1.3,
+          1.4
+        ]
+      },
+      "excluded_run_names": [
+        "20260908_034433_884492_cloudlab-n10-r100000-run3-s5-k2-ref4-tag-sigma_spill_boundary"
+      ],
+      "exclusion_reason": "Excluded under user preference to omit anomalies: sigma=5, reference=4 run has latency 1792 ms versus 1074 and 1066 ms in the other repeats. Both metrics of this run are excluded."
+    }
+  },
+  "source_directories": {
+    "fig_a/geo": "/home/chenlinwu2/csphd/csphd/research/flexible_dag/new_experiment2/sigma_spill_boundary_final0909/geo",
+    "fig_a/lan": "/home/chenlinwu2/csphd/csphd/research/flexible_dag/new_experiment2/new0903/new0908/geo_latest3_spill_on_bound_on_lan",
+    "fig_b/geo": "/home/chenlinwu2/csphd/csphd/research/flexible_dag/new_experiment2/with_coin/geo",
+    "fig_b/lan": "/home/chenlinwu2/csphd/csphd/research/flexible_dag/new_experiment2/with_coin/lan",
+    "fig_c/geo": "/home/chenlinwu2/csphd/csphd/research/flexible_dag/new_experiment2/figure_c/geo",
+    "fig_c/lan": "/home/chenlinwu2/csphd/csphd/research/flexible_dag/new_experiment2/figure_c/lan",
+    "attack": "/home/chenlinwu2/csphd/csphd/research/flexible_dag/ForArtifact/ae_error/10c/Fig10c"
+  }
+}

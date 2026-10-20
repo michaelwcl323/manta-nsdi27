@@ -1,0 +1,61 @@
+{
+  "created_at_utc": "2026-09-09T06:55:07Z",
+  "label": "cloudlab-n10-r100000-run2-s2-k4-ref4-tag-figure_c",
+  "run_dir": "manta_result/figure_c/geo/s2_k4_r4_c10_spill_on_bound_on/20260909_065507_595529_cloudlab-n10-r100000-run2-s2-k4-ref4-tag-figure_c",
+  "design_tag": "figure_c",
+  "network_tag": "geo",
+  "load_tag": "s2_k4_r4_c10_spill_on_bound_on",
+  "benchmark_type": "cloudlab",
+  "bench_params": {
+    "faults": 0,
+    "nodes": 10,
+    "workers": 1,
+    "collocate": true,
+    "rate": 100000,
+    "rate_type": "balanced",
+    "tx_size": 512,
+    "duration": 120,
+    "run": 2
+  },
+  "node_params": {
+    "sigma": 2,
+    "kappa": 4,
+    "reference": 4,
+    "coverage": 10,
+    "allow_cross_step_weak_edges": true,
+    "enable_fast_coin": false,
+    "solid_commit_trigger_on_solid_step": true,
+    "enable_commit_recheck": true,
+    "fast_coin_candidate_threshold": 0,
+    "solid_candidate_threshold": 0,
+    "attack_enabled": false,
+    "attack_start_secs": 60,
+    "attack_duration_secs": 1000,
+    "attack_group_size": 5,
+    "attack_limit_headers": false,
+    "attack_limit_certificates": true,
+    "enable_adaptive_intermediate_spill": true,
+    "adaptive_intermediate_spill_trigger_digests": 2,
+    "adaptive_intermediate_spill_cap_digests": 1,
+    "enable_intermediate_wave_boundary": true,
+    "design_tag": "figure_c",
+    "network_tag": "geo",
+    "load_tag": "s2_k4_r4_c10_spill_on_bound_on"
+  },
+  "derived_timing": {
+    "primary_boot_ts": 1788936918.298,
+    "first_proposal_ts": 1788936922.283,
+    "primary_boot_to_first_proposal_secs": 3.984999895095825,
+    "attack_start_on_primary_start_axis_secs": 56.015000104904175,
+    "attack_end_on_primary_start_axis_secs": null,
+    "attack_duration_secs": 1000.0,
+    "primary0_boot_ts": 1788936918.329,
+    "primary0_first_proposal_ts": 1788936922.594,
+    "primary0_attack_start_ts": null,
+    "primary0_attack_end_ts": null
+  },
+  "artifacts": {
+    "logs_dir": "manta_result/figure_c/geo/s2_k4_r4_c10_spill_on_bound_on/20260909_065507_595529_cloudlab-n10-r100000-run2-s2-k4-ref4-tag-figure_c/logs",
+    "primary0_log": "manta_result/figure_c/geo/s2_k4_r4_c10_spill_on_bound_on/20260909_065507_595529_cloudlab-n10-r100000-run2-s2-k4-ref4-tag-figure_c/logs/primary-0.log"
+  }
+}

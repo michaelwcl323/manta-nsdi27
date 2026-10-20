@@ -1,0 +1,61 @@
+{
+  "created_at_utc": "2026-09-08T10:58:52Z",
+  "label": "cloudlab-n10-r100000-run3-s3-k2-ref2-tag-sigma_spill_boundary_final",
+  "run_dir": "manta_result/sigma_spill_boundary_final/geo/s3_k2_r2_c7_spill_on_bound_on/20260908_105852_222392_cloudlab-n10-r100000-run3-s3-k2-ref2-tag-sigma_spill_boundary_final",
+  "design_tag": "sigma_spill_boundary_final",
+  "network_tag": "geo",
+  "load_tag": "s3_k2_r2_c7_spill_on_bound_on",
+  "benchmark_type": "cloudlab",
+  "bench_params": {
+    "faults": 0,
+    "nodes": 10,
+    "workers": 1,
+    "collocate": true,
+    "rate": 100000,
+    "rate_type": "balanced",
+    "tx_size": 512,
+    "duration": 120,
+    "run": 3
+  },
+  "node_params": {
+    "sigma": 3,
+    "kappa": 2,
+    "reference": 2,
+    "coverage": 7,
+    "allow_cross_step_weak_edges": true,
+    "enable_fast_coin": false,
+    "solid_commit_trigger_on_solid_step": true,
+    "enable_commit_recheck": true,
+    "fast_coin_candidate_threshold": 0,
+    "solid_candidate_threshold": 0,
+    "attack_enabled": false,
+    "attack_start_secs": 60,
+    "attack_duration_secs": 1000,
+    "attack_group_size": 5,
+    "attack_limit_headers": false,
+    "attack_limit_certificates": true,
+    "enable_adaptive_intermediate_spill": true,
+    "adaptive_intermediate_spill_trigger_digests": 2,
+    "adaptive_intermediate_spill_cap_digests": 1,
+    "enable_intermediate_wave_boundary": true,
+    "design_tag": "sigma_spill_boundary_final",
+    "network_tag": "geo",
+    "load_tag": "s3_k2_r2_c7_spill_on_bound_on"
+  },
+  "derived_timing": {
+    "primary_boot_ts": 1788865143.064,
+    "first_proposal_ts": 1788865147.082,
+    "primary_boot_to_first_proposal_secs": 4.01800012588501,
+    "attack_start_on_primary_start_axis_secs": 55.98199987411499,
+    "attack_end_on_primary_start_axis_secs": null,
+    "attack_duration_secs": 1000.0,
+    "primary0_boot_ts": 1788865143.139,
+    "primary0_first_proposal_ts": 1788865147.084,
+    "primary0_attack_start_ts": null,
+    "primary0_attack_end_ts": null
+  },
+  "artifacts": {
+    "logs_dir": "manta_result/sigma_spill_boundary_final/geo/s3_k2_r2_c7_spill_on_bound_on/20260908_105852_222392_cloudlab-n10-r100000-run3-s3-k2-ref2-tag-sigma_spill_boundary_final/logs",
+    "primary0_log": "manta_result/sigma_spill_boundary_final/geo/s3_k2_r2_c7_spill_on_bound_on/20260908_105852_222392_cloudlab-n10-r100000-run3-s3-k2-ref2-tag-sigma_spill_boundary_final/logs/primary-0.log"
+  }
+}

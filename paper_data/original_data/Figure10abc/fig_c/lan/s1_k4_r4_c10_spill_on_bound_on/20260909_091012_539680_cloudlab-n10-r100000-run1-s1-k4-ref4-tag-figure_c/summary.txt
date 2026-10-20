@@ -1,0 +1,55 @@
+Benchmark Results - 2026-09-09 03:12:40
+============================================================
+
+-----------------------------------------
+ SUMMARY:
+-----------------------------------------
+ + CONFIG:
+ Faults: 0 node(s)
+ Committee size: 10 node(s)
+ Worker(s) per node: 1 worker(s)
+ Collocate primary and workers: True
+ Input rate: 100,000 tx/s
+ Transaction size: 512 B
+ Execution time: 120 s
+
+ Header size: 1,000 B
+ Max header delay: 50 ms
+ GC depth: 200 round(s)
+ Sync retry delay: 1,000 ms
+ Sync retry nodes: 7 node(s)
+ batch size: 500,000 B
+ Max batch delay: 50 ms
+ Sigma: 1
+ Kappa: 4
+ Reference: 4
+ Coverage: 10
+ Allow cross-step weak edges: True
+ Enable fast coin: False
+ Solid commit trigger on solid step: True
+ Enable commit recheck: True
+ Fast coin candidate threshold: 0
+ Solid candidate threshold: 0
+ Attack enabled: False
+ Attack start seconds: 60
+ Attack duration seconds: 1000
+ Attack group size: 5
+ Attack limit headers: False
+ Attack limit certificates: True
+ Enable adaptive intermediate spill: True
+ Enable intermediate solid-step boundary: True
+ Adaptive intermediate spill trigger digests: 2
+ Adaptive intermediate spill cap digests: 1
+ Design tag: figure_c
+ Network tag: lan
+ Load tag: s1_k4_r4_c10_spill_on_bound_on
+
+ + RESULTS:
+ Consensus TPS: 99,584 tx/s
+ Consensus BPS: 50,987,041 B/s
+ Consensus latency: 1,388 ms
+
+ End-to-end TPS: 99,006 tx/s
+ End-to-end BPS: 50,691,188 B/s
+ End-to-end latency: 1,747 ms
+-----------------------------------------

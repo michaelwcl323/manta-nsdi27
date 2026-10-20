@@ -202,78 +202,35 @@ Each command succeeds if the corresponding PDF is created and the script prints 
 
 ### 4.2 Experiment 2
 
-Plotting code for Experiment 2 lives in `paper_data/graph_generated_code/experiment2/`. Shared helpers (do not run directly):
+The archived Experiment 2 data and plotting workflow use:
 
-- `paper_figure_save.py` — figure-saving helper (tight layout / aspect ratio)
-- `plot_latency_y_axis.py` — y-axis helper (linear / log latency scales)
+- `paper_data/original_data/Figure10abc/`: Fig A/B/C GEO and LAN inputs.
+- `paper_data/original_data/Figure10_attack/`: four attack configurations.
+- `paper_data/graph_generated_code/experiment2/`: plotting programs and `plot_style.py`.
 
-Paper data is under `paper_data/original_data/`. Regenerated figures go to `results/regenerate_graphs/`.
-
-#### Figure 10(a)
-
-Mean consensus latency vs $\kappa$ for each $(\sigma, \mathrm{ref})$ series. Latencies are read from `paper_data/original_data/Figure10a_10b/consensus_summary.csv` and averaged over runs with the same $(\sigma, \kappa, \mathrm{ref})$.
+Run from the repository root with Matplotlib and NumPy installed:
 
 ```bash
-cd paper_data/graph_generated_code/experiment2
-python3 plot_latency_by_kappa_sigma_reference.py
+python3 paper_data/graph_generated_code/experiment2/plot_fig_abc.py
+python3 paper_data/graph_generated_code/experiment2/plot_attack_latency_fig10_style.py
 ```
 
-Output:
+The first command generates eight panels: Fig A latency, Fig B latency, and
+Fig C latency/throughput for both GEO and LAN. The second generates the attack
+latency overlay using client send time and a cumulative mean, with the attack
+window at 60–120 seconds. Both commands write PDF and PNG files to
+`results/regenerate_graphs/experiment2_fig_abc/`.
 
-```text
-results/regenerate_graphs/latency_by_kappa_sigma_reference.pdf
-```
+Original run summaries, metadata, latency records, and the available Fig B
+per-run CSVs are committed. Raw `.log` files are excluded. The attack plot uses
+individual send samples exported to `paper_data/processed_data/Figure10_attack/`
+so it can be reproduced without logs. Recomputed means and run tables are
+written under `results/processed_data/Figure10abc/`, outside `original_data`.
 
-#### Figure 10(b)
-
-Mean consensus latency vs reference for $\kappa=2$, comparing $\sigma=1$ and $\sigma=2$. Same summary CSV and multi-run averaging as Figure 10(a).
-
-```bash
-cd paper_data/graph_generated_code/experiment2
-python3 plot_reference_impact_kappa2_by_sigma.py
-```
-
-Output:
-
-```text
-results/regenerate_graphs/reference_impact_kappa2_by_sigma.pdf
-```
-
-#### Figure 10(c)
-
-Attack-window latency timeseries overlay. Prefer AE reproduction outputs under
-`experiment_reproduced/experiment2/results/Figure10c/{k2-ref4,…}/` (each with
-`latency.csv` + `send_samples.csv`). Paper-original dirs under
-`paper_data/original_data/Figure10c/` also work when they include send samples.
-
-Main script: `plot_attack_latency_timeseries.py` (imports the shared helpers above).
-
-Defaults are the paper style: **client send time × cumulative mean**, order
-`k2-c4,k2-c7,k3-c7,k3-c10`, attack 60–120s, data-driven y-axis.
-
-```bash
-cd paper_data/graph_generated_code/experiment2
-
-python3 plot_attack_latency_timeseries.py \
-  --merge-four-runs \
-    ../../../experiment_reproduced/experiment2/results/Figure10c/k2-ref4 \
-    ../../../experiment_reproduced/experiment2/results/Figure10c/k2-ref7 \
-    ../../../experiment_reproduced/experiment2/results/Figure10c/k3-ref7 \
-    ../../../experiment_reproduced/experiment2/results/Figure10c/k3-ref10 \
-  --output ../../../results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.pdf
-```
-
-Output:
-
-```text
-results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.pdf
-results/regenerate_graphs/attack_latency_timeseries_overlay_mean_send_time.png
-```
-
-(`run_figure10.py` / `run_figure10c_fab.py` also copy these to
-`attack_latency_timeseries_overlay_mean.{pdf,png}`.)
-
-Each command succeeds if the corresponding PDF is created and the script prints the output path.
+For a subset, use `--figure a|b|c` and `--network geo|lan`. Original reference
+figures are under `paper_data/paper_graph/experiment2/`. See
+[the plotting guide](paper_data/graph_generated_code/experiment2/README_fig_abc.md)
+for data provenance and detailed commands.
 
 ### 4.3 Experiment 3
 
@@ -483,7 +440,7 @@ experiment_reproduced/experiment2/results/Figure10c/{k2-ref4,k2-ref7,k3-ref7,k3-
 experiment_reproduced/experiment2/results/Figure10c/{k2-ref4,k2-ref7,k3-ref7,k3-ref10}/send_samples.csv
 ```
 
-`run_figure10.py` then **directly calls** the Figure 10 plot scripts (same as §4.2) and
+`run_figure10.py` then **directly calls** its live-reproduction Figure 10 plot scripts and
 writes PDFs/PNGs under `results/regenerate_graphs/`. Use `--skip-plot` to skip.
 `run_figure10c_fab.py` does the same for Figure 10(c) after the four fab cells finish
 (unless `--skip-plot`). Figure 10(c) defaults to send-time × cumulative-mean

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from benchmark.logs import parse_primary_log_markers
@@ -19,4 +20,10 @@ def resolve_primary_start_ts(run_dir: Path, fallback_min_proposal_ts: float) -> 
         boot = markers.get("boot_ts")
         if boot is not None:
             return float(boot)
+    metadata = run_dir / "run_metadata.json"
+    if metadata.is_file():
+        timing = json.loads(metadata.read_text()).get("derived_timing", {})
+        for key in ("primary0_boot_ts", "primary_boot_ts"):
+            if timing.get(key) is not None:
+                return float(timing[key])
     return float(fallback_min_proposal_ts)
