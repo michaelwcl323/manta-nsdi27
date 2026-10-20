@@ -11,6 +11,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["ps.fonttype"] = 42
 plt.rcParams["font.family"] = "DejaVu Sans"
 
 SCRIPT_DIR = Path(__file__).resolve().parent

@@ -14,6 +14,8 @@ if not hasattr(np, "Inf"):
     np.Inf = np.inf
 
 matplotlib.use("Agg")
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.pyplot as plt
 
 from plot_latency_common import resolve_primary_start_ts

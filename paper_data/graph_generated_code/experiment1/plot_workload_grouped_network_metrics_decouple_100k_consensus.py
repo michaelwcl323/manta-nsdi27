@@ -164,6 +164,8 @@ def _build_rows():
 def _set_academic_style():
     plt.rcParams.update(
         {
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
             "font.family": "sans-serif",
             "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
             "mathtext.fontset": "dejavusans",

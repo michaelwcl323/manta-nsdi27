@@ -12,6 +12,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["ps.fonttype"] = 42
 plt.rcParams["font.family"] = "DejaVu Sans"
 
 # Script location: paper_data/graph_generated_code/experiment3/631/
