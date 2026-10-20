@@ -1,4 +1,5 @@
 build/
+results/regenerate_graphs/
 venv/
 __pycache__/
 *.pyc
