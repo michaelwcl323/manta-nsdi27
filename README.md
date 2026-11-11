@@ -10,7 +10,7 @@ The artifact includes the Manta, Tusk, DAG-Rider, Mahi-Mahi, and Chitu baselines
 
 Each implementation is maintained in a separate Git branch. This `artifact-evaluation` branch contains the evaluation instructions, experiment configurations, orchestration scripts, and paper results.
 
-## 2. Getting Started and Functional Validation
+## 2. Getting Started
 
 ### 2.1 Clone the Artifact
 
@@ -24,40 +24,13 @@ git switch artifact-evaluation
 
 ### 2.2 Prerequisites
 
+Python 3.11 or earlier is required (Python version <= 3.11).
+
 Please install the experiment environment using the following command on Linux. 
 
 ```Bash
 ./scripts/environment_setup.sh
 ```
-
-### 2.3 Run the Functional Test
-
-The functional test is a lightweight local execution that verifies whether the artifact environment is correctly configured and whether the implementation of each branch can run successfully. 
-
-```bash
-python test_functional_test.py --all
-```
-
-It takes about 10-15 minutes to finish functional testing. 
-
-### 2.4 Expected Output
-
-The test passes if it ends with:
-
-```text
-[functional-test] manta: RUNNING
-[functional-test] manta: PASS
-[functional-test] tusk: RUNNING
-[functional-test] tusk: PASS
-[functional-test] mahi-mahi: RUNNING
-[functional-test] mahi-mahi: PASS
-[functional-test] chitu: RUNNING
-[functional-test] chitu: PASS
-
-[functional-test] All selected functional tests passed. Logs: functional_test_results/<timestamp>
-```
-
-If you want to see the logs of functional tests, please find them in the folder `functional_test_results`.
 
 ## 3. Remote Environment Deployment
 
@@ -126,22 +99,17 @@ The bootstrap succeeds only if every node creates `/local/bootstrap.done`. If an
 
 ### 3.4 Deploy the Artifact
 
-Deploy is driven by the controller (the last host in `build/nodes`). One command does both Getting Started and the CloudLab remote functional test:
+Deploy is driven by the controller (the last host in `build/nodes`). Run:
 
 ```bash
 python cloudlab/deploy_environment.py
 ```
 
-The controller:
-
-1. Runs Getting Started on every node (clone, check out `artifact-evaluation`, run `./scripts/environment_setup.sh`).
-2. Runs a short `cloudlab_remote` functional test for `tusk` on the replica hosts from `cloudlab_settings.json` (10 nodes, 10 seconds). The controller does not participate as a consensus node.
+The controller runs Getting Started on every node (clone, check out `artifact-evaluation`, run `./scripts/environment_setup.sh`).
 
 Deploy succeeds if it ends with:
 
 ```text
-[deploy] functional tusk: PASS
-[deploy] CloudLab remote functional tests passed on all branches.
 [deploy] done
 ```
 
